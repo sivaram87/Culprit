@@ -1,4 +1,4 @@
-"""Pure logic for Flag Guard: find flag variants that crash more than control,
+"""Pure logic for Culprit: find flag variants that crash more than control,
 and build the Remote Config change that kills them. No I/O, so it's all testable."""
 import copy
 import math

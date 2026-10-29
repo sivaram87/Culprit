@@ -1,4 +1,4 @@
-"""Flag Guard job: crash rate per flag variant -> Slack alert -> optional kill switch.
+"""Culprit job: crash rate per flag variant -> Slack alert -> optional kill switch.
 
 Env:
   SIGNAL_SOURCE      crashlytics (default) | sentry   -- see source_sentry.py for Sentry env
@@ -6,7 +6,7 @@ Env:
   GCP_PROJECT        GCP project id (audit table; also Firebase project for crashlytics/firebase)
   CRASHLYTICS_TABLE  project.firebase_crashlytics.<app>_REALTIME (batch table for long backtests)
   ANALYTICS_DATASET  project.analytics_<id>
-  AUDIT_TABLE        project.flagguard.actions
+  AUDIT_TABLE        project.culprit.actions
   SLACK_WEBHOOK      mounted from Secret Manager
   AUTO_KILL=1        allow kills for flags with "auto_kill": true (default: alert only)
   MIN_USERS, MIN_CRASHES, MIN_RATIO, ALPHA   optional threshold overrides (staging)

@@ -1,8 +1,8 @@
-# Flag Guard
+# Culprit
 
 **Find the feature-flag variant behind a mobile crash, ANR or error spike, and switch it off automatically.**
 
-Your crash tool shows that crashes, ANRs or non-fatal errors went up. Flag Guard shows *why*: "variant `on` of `new_checkout` crashes 6× more than control on v5.2". It posts that to Slack and, if you've allowed it, turns the variant off with a kill switch, all within about 15 minutes and without anyone being woken up to compare dashboards.
+Your crash tool shows that crashes, ANRs or non-fatal errors went up. Culprit shows *why*: "variant `on` of `new_checkout` crashes 6× more than control on v5.2". It posts that to Slack and, if you've allowed it, turns the variant off with a kill switch, all within about 15 minutes and without anyone being woken up to compare dashboards.
 
 Works with **Crashlytics or Sentry** for crash data, and **Firebase Remote Config or Statsig** for flags, in any combination.
 
@@ -53,7 +53,7 @@ Mobile releases can't be rolled back. Once a build is in the store, the only fas
 3. check whether it affects every app version or only one,
 4. flip the right flag.
 
-Crash tools handle step 1. Flag Guard handles steps 2 to 4.
+Crash tools handle step 1. Culprit handles steps 2 to 4.
 
 ## How it works
 
@@ -67,7 +67,7 @@ Crash tools handle step 1. Flag Guard handles steps 2 to 4.
  └──────────────────────────┬──────────────────────────┘
                             │ BigQuery export or Sentry API
                             ▼
- ┌──────── Flag Guard job (Cloud Run, every 15 min) ────────┐
+ ┌────────── Culprit job (Cloud Run, every 15 min) ─────────┐
  │ 1. Count the last 24h: affected users and active users   │
  │    per (flag, variant, app version, signal)              │
  │    signal = FATAL | ANR | NON_FATAL                      │
@@ -105,7 +105,7 @@ client/
   android/Flags.kt         Same wrapper for Android
   android/FlagsTest.kt     JUnit: kill switch serves control
 grafana/
-  flagguard.json           Importable Grafana dashboard (BigQuery plugin)
+  culprit.json           Importable Grafana dashboard (BigQuery plugin)
 job/
   detect.py                Detection, kill policy and safety checks, no side effects
   main.py                  Crashlytics/BigQuery counts, Remote Config kill, Slack, audit, CLI
@@ -146,7 +146,7 @@ Per tool:
 
 Wait until data appears (up to 24h for the first daily tables).
 
-**Sentry:** Sentry can't break its session counts down by custom tags, so Flag Guard counts active users from **app-start traces**, which carry the same `ff_*` tags as errors. Sample them at 100%: set `tracesSampleRate = 1.0`, or use a `tracesSampler` that returns `1.0` for the first screen-load transaction (op `ui.load`), which holds the app-start spans. Sentry's mobile SDKs use an install ID as `user.id` by default, so counts are distinct installs, the same unit as Crashlytics.
+**Sentry:** Sentry can't break its session counts down by custom tags, so Culprit counts active users from **app-start traces**, which carry the same `ff_*` tags as errors. Sample them at 100%: set `tracesSampleRate = 1.0`, or use a `tracesSampler` that returns `1.0` for the first screen-load transaction (op `ui.load`), which holds the app-start spans. Sentry's mobile SDKs use an install ID as `user.id` by default, so counts are distinct installs, the same unit as Crashlytics.
 
 Create an auth token (**Settings → Auth Tokens**) with **only** `org:read` and `event:read`, and note your organization slug and numeric project ID.
 
@@ -258,7 +258,7 @@ Changes to this file go through code review. That review is the approval step fo
 
 ### 5. Backtest
 
-Before deploying, check what Flag Guard would have flagged over the last 30 days. Neither `--backtest` nor `--dry-run` (last 24h only) posts to Slack, writes the audit table or touches a kill switch.
+Before deploying, check what Culprit would have flagged over the last 30 days. Neither `--backtest` nor `--dry-run` (last 24h only) posts to Slack, writes the audit table or touches a kill switch.
 
 ```bash
 cd job
@@ -302,19 +302,19 @@ Secrets (`SLACK_WEBHOOK_URL`, `SENTRY_AUTH_TOKEN`, `STATSIG_CONSOLE_KEY`) are on
 
 `deploy.sh` is safe to re-run. Re-running it is also how you upgrade: it adds the `signal` and `segments` columns to an audit table created by an older version. It sets up:
 
-- the service account `flagguard@<project>.iam.gserviceaccount.com`
-- the dataset and table `flagguard.actions`, which is the audit log
-- the dashboard views `flagguard.findings`, `flagguard.daily` and `flagguard.flags_30d`, plus a printed link that creates the [dashboard](#dashboard)
+- the service account `culprit@<project>.iam.gserviceaccount.com`
+- the dataset and table `culprit.actions`, which is the audit log
+- the dashboard views `culprit.findings`, `culprit.daily` and `culprit.flags_30d`, plus a printed link that creates the [dashboard](#dashboard)
 - IAM roles for the chosen tools only (see [Security](#security))
-- secrets `flagguard-slack`, plus `flagguard-sentry` and/or `flagguard-statsig` when used
-- the Cloud Run job `flagguard`, built from `Dockerfile`, in **alert-only** mode
-- the Cloud Scheduler job `flagguard-every-15m`
+- secrets `culprit-slack`, plus `culprit-sentry` and/or `culprit-statsig` when used
+- the Cloud Run job `culprit`, built from `Dockerfile`, in **alert-only** mode
+- the Cloud Scheduler job `culprit-every-15m`
 
 Optional: set `REGION`, which defaults to `us-central1`.
 
 To deploy a second app (iOS and Android are separate Crashlytics tables or Sentry projects), deploy again with different values.
 
-> ⚠️ A second deploy into the same Google Cloud project currently reuses the job name `flagguard`. Rename the job in `deploy.sh` to run both side by side.
+> ⚠️ A second deploy into the same Google Cloud project currently reuses the job name `culprit`. Rename the job in `deploy.sh` to run both side by side.
 
 ### 7. Turn on auto-kill
 
@@ -336,7 +336,7 @@ Environment variables read by the job:
 | `SIGNAL_SOURCE` | — | `crashlytics` (default) or `sentry` |
 | `FLAG_TOOL` | — | `firebase` (default) or `statsig` |
 | `GCP_PROJECT` | always | GCP project id. Also the Firebase project for Crashlytics and Remote Config. |
-| `AUDIT_TABLE` | job | `project.flagguard.actions` |
+| `AUDIT_TABLE` | job | `project.culprit.actions` |
 | `SLACK_WEBHOOK` | job | Mounted from Secret Manager by `deploy.sh` |
 | `CRASHLYTICS_TABLE` | Crashlytics | `project.firebase_crashlytics.<app>_REALTIME` |
 | `ANALYTICS_DATASET` | Crashlytics | `project.analytics_<id>` |
@@ -419,32 +419,32 @@ Find the cause before you undo. The detector will flag the variant again once it
 
 ## Dashboard
 
-Flag Guard's history (every finding and kill) can be shown in **Looker Studio** or **Grafana**. Both read the same BigQuery views directly, so there's nothing extra to host.
+Culprit's history (every finding and kill) can be shown in **Looker Studio** or **Grafana**. Both read the same BigQuery views directly, so there's nothing extra to host.
 
 **Views** (created by `deploy.sh` from `job/dashboard.sql`):
 
 | View | One row per | Use it for |
 |---|---|---|
-| `flagguard.findings` | finding | The full list, with `rate_ratio` (variant ÷ control) and `top_segment` |
-| `flagguard.daily` | day × signal × action | Trends: findings and kills over time |
-| `flagguard.flags_30d` | flag | Which flags misbehave most: alerts, kills, last alert, last action |
+| `culprit.findings` | finding | The full list, with `rate_ratio` (variant ÷ control) and `top_segment` |
+| `culprit.daily` | day × signal × action | Trends: findings and kills over time |
+| `culprit.flags_30d` | flag | Which flags misbehave most: alerts, kills, last alert, last action |
 
-The audit table doesn't record when someone undoes a kill, so "last action" shows what Flag Guard did, not the switch's current state.
+The audit table doesn't record when someone undoes a kill, so "last action" shows what Culprit did, not the switch's current state.
 
 ### Looker Studio
 
-1. Open the link `deploy.sh` prints at the end. It creates a report named "Flag Guard" with all three views connected.
+1. Open the link `deploy.sh` prints at the end. It creates a report named "Culprit" with all three views connected.
 2. For each data source, choose **Viewer's credentials** (Resource → Manage added data sources → Edit). Each viewer then needs their own BigQuery access, so the dashboard never shows data to someone who couldn't query it.
 3. Add four charts:
    - **Findings per day:** stacked bar from `daily`, dimension `day`, breakdown `signal`, metric `findings`
    - **Kills over time:** line from `daily`, filtered to `action = killed`
    - **Recent findings:** table from `findings`, sorted by `ts` descending, showing flag, variant, version, signal, crash_rate, control_rate, rate_ratio, top_segment and action
    - **Flags, last 30 days:** table from `flags_30d`, sorted by `alerts`
-4. **Give your team access:** grant `roles/bigquery.dataViewer` on the `flagguard` dataset and `roles/bigquery.jobUser` on the project, then share the report.
+4. **Give your team access:** grant `roles/bigquery.dataViewer` on the `culprit` dataset and `roles/bigquery.jobUser` on the project, then share the report.
 
 ### Grafana
 
-`grafana/flagguard.json` is a ready-made dashboard: three totals (findings, kills, flags affected), findings per day stacked by signal, kills per day, a table of recent findings with kills highlighted, and a 30-day per-flag table. All panels except the 30-day table follow Grafana's time picker. It needs **Grafana 11.6 or newer** and the official BigQuery plugin.
+`grafana/culprit.json` is a ready-made dashboard: three totals (findings, kills, flags affected), findings per day stacked by signal, kills per day, a table of recent findings with kills highlighted, and a 30-day per-flag table. All panels except the 30-day table follow Grafana's time picker. It needs **Grafana 11.6 or newer** and the official BigQuery plugin.
 
 **1. Install the plugin**
 
@@ -454,7 +454,7 @@ grafana cli plugins install grafana-bigquery-datasource
 
 Or install "Google BigQuery" from **Administration → Plugins**. On Grafana Cloud it's already available.
 
-**2. Give Grafana read-only access.** Grafana only needs to read the `flagguard` dataset. Pick the first option that fits where Grafana runs:
+**2. Give Grafana read-only access.** Grafana only needs to read the `culprit` dataset. Pick the first option that fits where Grafana runs:
 
 | Grafana runs on | Auth method in the data source | What to grant |
 |---|---|---|
@@ -462,21 +462,21 @@ Or install "Google BigQuery" from **Administration → Plugins**. On Grafana Clo
 | Grafana Cloud | Workload Identity Federation or Forward OAuth Identity | The two roles below, to each user (or their group). Queries run as the signed-in user. |
 | Anywhere else | Google JWT File | The two roles below, to a dedicated service account with a key |
 
-The two roles: `roles/bigquery.dataViewer` on the `flagguard` dataset, and `roles/bigquery.jobUser` on the project. For a dedicated service account:
+The two roles: `roles/bigquery.dataViewer` on the `culprit` dataset, and `roles/bigquery.jobUser` on the project. For a dedicated service account:
 
 ```bash
-gcloud iam service-accounts create flagguard-grafana --project my-proj
-bq add-iam-policy-binding --member serviceAccount:flagguard-grafana@my-proj.iam.gserviceaccount.com \
-  --role roles/bigquery.dataViewer my-proj:flagguard
+gcloud iam service-accounts create culprit-grafana --project my-proj
+bq add-iam-policy-binding --member serviceAccount:culprit-grafana@my-proj.iam.gserviceaccount.com \
+  --role roles/bigquery.dataViewer my-proj:culprit
 gcloud projects add-iam-policy-binding my-proj --condition None \
-  --member serviceAccount:flagguard-grafana@my-proj.iam.gserviceaccount.com --role roles/bigquery.jobUser
+  --member serviceAccount:culprit-grafana@my-proj.iam.gserviceaccount.com --role roles/bigquery.jobUser
 ```
 
 Only if you need the JWT option, create a key and keep it out of this repo. Grafana stores it encrypted.
 
 ```bash
-gcloud iam service-accounts keys create flagguard-grafana-key.json \
-  --iam-account flagguard-grafana@my-proj.iam.gserviceaccount.com
+gcloud iam service-accounts keys create culprit-grafana-key.json \
+  --iam-account culprit-grafana@my-proj.iam.gserviceaccount.com
 ```
 
 The account can read only aggregate counts in one dataset. It can't touch kill switches, crash data or the job.
@@ -486,20 +486,20 @@ The account can read only aggregate counts in one dataset. It can't touch kill s
 ```yaml
 apiVersion: 1
 datasources:
-  - name: BigQuery (Flag Guard)
+  - name: BigQuery (Culprit)
     type: grafana-bigquery-datasource
     jsonData:
       authenticationType: jwt          # or gce
-      clientEmail: flagguard-grafana@my-proj.iam.gserviceaccount.com
+      clientEmail: culprit-grafana@my-proj.iam.gserviceaccount.com
       defaultProject: my-proj
       tokenUri: https://oauth2.googleapis.com/token
-      privateKeyPath: /etc/grafana/secrets/flagguard-grafana-key.json
+      privateKeyPath: /etc/grafana/secrets/culprit-grafana-key.json
 ```
 
-**4. Import the dashboard.** In **Dashboards → New → Import**, upload `grafana/flagguard.json`. Then pick the BigQuery data source and enter your GCP project id when asked. Or import it through the API:
+**4. Import the dashboard.** In **Dashboards → New → Import**, upload `grafana/culprit.json`. Then pick the BigQuery data source and enter your GCP project id when asked. Or import it through the API:
 
 ```bash
-jq -n --slurpfile d grafana/flagguard.json --arg ds "$DATASOURCE_UID" --arg project my-proj '{
+jq -n --slurpfile d grafana/culprit.json --arg ds "$DATASOURCE_UID" --arg project my-proj '{
   dashboard: $d[0], overwrite: true,
   inputs: [
     {name: "DS_BIGQUERY", type: "datasource", pluginId: "grafana-bigquery-datasource", value: $ds},
@@ -564,8 +564,8 @@ cd job && python3 test_detect.py && python3 test_adapters.py
 | Secrets leak | The Slack webhook, Sentry token and Statsig key live only in Secret Manager, and each is mounted only when its tool is chosen. There are no service-account key files, because Cloud Run attaches the account. |
 | Sentry token misuse | The token needs only `org:read` and `event:read`. It can read error data but change nothing. |
 | PII | Tags contain only flag name and variant. Slack messages, audit rows and dashboard views contain only aggregate counts and OS/device names, never user IDs. |
-| Dashboard over-sharing | Looker Studio data sources use viewer's credentials, so viewers need their own BigQuery read access on the `flagguard` dataset. Sharing the report doesn't share the data. |
-| Grafana's BigQuery access | Read-only: `bigquery.dataViewer` on the `flagguard` dataset plus `bigquery.jobUser`. Auth methods without keys (GCE, workload identity, forwarded OAuth) are preferred. A key, if needed, lives only in Grafana's encrypted storage. The dashboard JSON contains no project id or credentials. |
+| Dashboard over-sharing | Looker Studio data sources use viewer's credentials, so viewers need their own BigQuery read access on the `culprit` dataset. Sharing the report doesn't share the data. |
+| Grafana's BigQuery access | Read-only: `bigquery.dataViewer` on the `culprit` dataset plus `bigquery.jobUser`. Auth methods without keys (GCE, workload identity, forwarded OAuth) are preferred. A key, if needed, lives only in Grafana's encrypted storage. The dashboard JSON contains no project id or credentials. |
 | Over-broad access | Always: `bigquery.jobUser`, `bigquery.dataEditor` on the audit table only, `secretAccessor` on its own secrets, and `run.invoker` on this job only. Crashlytics adds `bigquery.dataViewer` on the two export datasets. Remote Config adds `firebaseremoteconfig.admin`. |
 | Supply chain | Three pinned dependencies: `google-cloud-bigquery`, `google-auth`, `requests`. |
 

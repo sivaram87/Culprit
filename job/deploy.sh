@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy Flag Guard as a Cloud Run job, triggered every 15 min by Cloud Scheduler.
+# Deploy Culprit as a Cloud Run job, triggered every 15 min by Cloud Scheduler.
 #
 # Pick a signal source and a flag tool (any combination works):
 #   SIGNAL_SOURCE=crashlytics  needs CRASHLYTICS_TABLE, ANALYTICS_DATASET (BigQuery export on)
@@ -17,8 +17,8 @@ set -euo pipefail
 SIGNAL_SOURCE=${SIGNAL_SOURCE:-crashlytics}
 FLAG_TOOL=${FLAG_TOOL:-firebase}
 REGION=${REGION:-us-central1}
-SA=flagguard@$PROJECT.iam.gserviceaccount.com
-AUDIT_TABLE=$PROJECT.flagguard.actions
+SA=culprit@$PROJECT.iam.gserviceaccount.com
+AUDIT_TABLE=$PROJECT.culprit.actions
 cd "$(dirname "$0")"
 
 # Store a secret in Secret Manager (create or add a version) when a value is given,
@@ -35,22 +35,22 @@ secret() {  # secret <env name in job> <secret id> <value or empty>
 }
 
 # Service account. No keys: Cloud Run attaches it directly.
-gcloud iam service-accounts create flagguard --project "$PROJECT" --display-name "Flag Guard" || true
+gcloud iam service-accounts create culprit --project "$PROJECT" --display-name "Culprit" || true
 
 # Audit table (all combinations): run queries, write only this table.
-bq --project_id "$PROJECT" mk --dataset flagguard || true
-bq --project_id "$PROJECT" mk --table "$PROJECT:flagguard.actions" \
+bq --project_id "$PROJECT" mk --dataset culprit || true
+bq --project_id "$PROJECT" mk --table "$PROJECT:culprit.actions" \
   ts:TIMESTAMP,flag:STRING,variant:STRING,version:STRING,signal:STRING,users:INTEGER,crashed_users:INTEGER,crash_rate:FLOAT,control_rate:FLOAT,p:FLOAT,action:STRING,segments:STRING || true
 # Upgrade path for audit tables created by older versions.
 bq --project_id "$PROJECT" query --use_legacy_sql=false \
   "ALTER TABLE \`$AUDIT_TABLE\` ADD COLUMN IF NOT EXISTS signal STRING, ADD COLUMN IF NOT EXISTS segments STRING"
 # Dashboard views (read by Looker Studio).
 sed "s/{project}/$PROJECT/g" dashboard.sql | bq --project_id "$PROJECT" query --use_legacy_sql=false
-bq add-iam-policy-binding --member "serviceAccount:$SA" --role roles/bigquery.dataEditor "$PROJECT:flagguard.actions"
+bq add-iam-policy-binding --member "serviceAccount:$SA" --role roles/bigquery.dataEditor "$PROJECT:culprit.actions"
 gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role roles/bigquery.jobUser --condition None
 
 ENV="GCP_PROJECT=$PROJECT,AUDIT_TABLE=$AUDIT_TABLE,AUTO_KILL=${AUTO_KILL:-0},SIGNAL_SOURCE=$SIGNAL_SOURCE,FLAG_TOOL=$FLAG_TOOL"
-secret SLACK_WEBHOOK flagguard-slack "${SLACK_WEBHOOK_URL:-}"
+secret SLACK_WEBHOOK culprit-slack "${SLACK_WEBHOOK_URL:-}"
 
 # Signal source: read-only access only.
 case "$SIGNAL_SOURCE" in
@@ -64,7 +64,7 @@ case "$SIGNAL_SOURCE" in
     ;;
   sentry)
     : "${SENTRY_ORG:?}" "${SENTRY_PROJECT_ID:?}"
-    secret SENTRY_AUTH_TOKEN flagguard-sentry "${SENTRY_AUTH_TOKEN:-}"  # scopes: org:read, event:read
+    secret SENTRY_AUTH_TOKEN culprit-sentry "${SENTRY_AUTH_TOKEN:-}"  # scopes: org:read, event:read
     ENV+=",SENTRY_ORG=$SENTRY_ORG,SENTRY_PROJECT_ID=$SENTRY_PROJECT_ID,SENTRY_URL=${SENTRY_URL:-https://sentry.io}"
     ;;
   *) echo "unknown SIGNAL_SOURCE=$SIGNAL_SOURCE" >&2; exit 1 ;;
@@ -77,30 +77,30 @@ case "$FLAG_TOOL" in
       --role roles/firebaseremoteconfig.admin --condition None
     ;;
   statsig)
-    secret STATSIG_CONSOLE_KEY flagguard-statsig "${STATSIG_CONSOLE_KEY:-}"
+    secret STATSIG_CONSOLE_KEY culprit-statsig "${STATSIG_CONSOLE_KEY:-}"
     ;;
   *) echo "unknown FLAG_TOOL=$FLAG_TOOL" >&2; exit 1 ;;
 esac
 
 # Job. AUTO_KILL stays off (alert only) until the backtest is clean; redeploy with AUTO_KILL=1 to enable.
-gcloud run jobs deploy flagguard --project "$PROJECT" --region "$REGION" --source . \
+gcloud run jobs deploy culprit --project "$PROJECT" --region "$REGION" --source . \
   --service-account "$SA" --max-retries 0 \
   --set-env-vars "$ENV" \
   --set-secrets "$(IFS=,; echo "${SECRETS[*]}")"
 
-gcloud run jobs add-iam-policy-binding flagguard --project "$PROJECT" --region "$REGION" \
+gcloud run jobs add-iam-policy-binding culprit --project "$PROJECT" --region "$REGION" \
   --member "serviceAccount:$SA" --role roles/run.invoker
 
-gcloud scheduler jobs create http flagguard-every-15m --project "$PROJECT" --location "$REGION" \
+gcloud scheduler jobs create http culprit-every-15m --project "$PROJECT" --location "$REGION" \
   --schedule "*/15 * * * *" --http-method POST \
-  --uri "https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/flagguard:run" \
+  --uri "https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/culprit:run" \
   --oauth-service-account-email "$SA" || echo "scheduler job already exists"
 
 # Looker Studio report with the three dashboard views connected. Opening it creates the report.
-LS="https://lookerstudio.google.com/reporting/create?r.reportName=Flag%20Guard"
+LS="https://lookerstudio.google.com/reporting/create?r.reportName=Culprit"
 i=0
 for view in findings daily flags_30d; do
-  LS+="&ds.ds$i.connector=bigQuery&ds.ds$i.type=TABLE&ds.ds$i.projectId=$PROJECT&ds.ds$i.datasetId=flagguard&ds.ds$i.tableId=$view"
+  LS+="&ds.ds$i.connector=bigQuery&ds.ds$i.type=TABLE&ds.ds$i.projectId=$PROJECT&ds.ds$i.datasetId=culprit&ds.ds$i.tableId=$view"
   i=$((i + 1))
 done
 echo

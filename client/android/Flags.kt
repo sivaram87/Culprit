@@ -1,5 +1,5 @@
 /** The one way app code reads feature flags. Honors `killswitch_<name>` and tags
- *  crashes + sessions with the variant so Flag Guard can compare crash rates.
+ *  crashes + sessions with the variant so Culprit can compare crash rates.
  *  Vendor-neutral: wire `value`, `isKilled` and `tagSinks` once at startup
  *  (Firebase / Statsig / Crashlytics / Sentry snippets are in the README). */
 object Flags {

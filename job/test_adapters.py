@@ -153,7 +153,7 @@ def test_sentry_segments_query():
 def run_once(segments_rows):
     """One main.run() with every service stubbed; returns (slack texts, audit rows)."""
     os.environ.update(SIGNAL_SOURCE="crashlytics", FLAG_TOOL="firebase", AUTO_KILL="0",
-                      AUDIT_TABLE="p.flagguard.actions", SLACK_WEBHOOK="https://hooks.example")
+                      AUDIT_TABLE="p.culprit.actions", SLACK_WEBHOOK="https://hooks.example")
     slack_texts, audit_rows = [], []
     main.counts = lambda bq, flags, end: [
         dict(flag="checkout", variant="off", version="5.2", signal="FATAL", users=10_000, crashed_users=20),
@@ -194,8 +194,8 @@ def test_grafana_dashboard_matches_views():
     import re
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    dash = json.loads((root / "grafana" / "flagguard.json").read_text())
-    views = set(re.findall(r"VIEW `\{project\}\.flagguard\.(\w+)`", (root / "job" / "dashboard.sql").read_text()))
+    dash = json.loads((root / "grafana" / "culprit.json").read_text())
+    views = set(re.findall(r"VIEW `\{project\}\.culprit\.(\w+)`", (root / "job" / "dashboard.sql").read_text()))
     assert views == {"findings", "daily", "flags_30d"}, views
 
     assert {i["name"] for i in dash["__inputs"]} == {"DS_BIGQUERY", "VAR_PROJECT"}
@@ -205,9 +205,9 @@ def test_grafana_dashboard_matches_views():
         sql = t["rawSql"]
         assert t["datasource"]["uid"] == "${DS_BIGQUERY}"
         used = re.findall(r"`([^`]+)`", sql)
-        assert used and all(re.fullmatch(r"\$\{project\}\.flagguard\.(\w+)", u) for u in used), sql
+        assert used and all(re.fullmatch(r"\$\{project\}\.culprit\.(\w+)", u) for u in used), sql
         assert {u.rsplit(".", 1)[1] for u in used} <= views, sql
-        if "flagguard.findings" in sql:
+        if "culprit.findings" in sql:
             assert "$__timeFilter(ts)" in sql, sql
 
 

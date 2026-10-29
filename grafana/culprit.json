@@ -3,7 +3,7 @@
     {
       "name": "DS_BIGQUERY",
       "label": "BigQuery",
-      "description": "BigQuery data source with read access to the flagguard dataset",
+      "description": "BigQuery data source with read access to the culprit dataset",
       "type": "datasource",
       "pluginId": "grafana-bigquery-datasource",
       "pluginName": "Google BigQuery"
@@ -11,7 +11,7 @@
     {
       "name": "VAR_PROJECT",
       "label": "GCP project id",
-      "description": "Project that holds the flagguard dataset",
+      "description": "Project that holds the culprit dataset",
       "type": "constant",
       "value": ""
     }
@@ -30,11 +30,11 @@
       "version": "3.0.0"
     }
   ],
-  "title": "Flag Guard",
-  "uid": "flagguard",
-  "description": "Feature-flag variants flagged and killed by Flag Guard (github.com/sivaram87/FlagGuard)",
+  "title": "Culprit",
+  "uid": "culprit",
+  "description": "Feature-flag variants flagged and killed by Culprit (github.com/sivaram87/Culprit)",
   "tags": [
-    "flagguard",
+    "culprit",
     "mobile",
     "feature-flags"
   ],
@@ -92,7 +92,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": 1,
-          "rawSql": "SELECT COUNT(*) AS findings FROM `${project}.flagguard.findings` WHERE $__timeFilter(ts)"
+          "rawSql": "SELECT COUNT(*) AS findings FROM `${project}.culprit.findings` WHERE $__timeFilter(ts)"
         }
       ],
       "options": {
@@ -141,7 +141,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": 1,
-          "rawSql": "SELECT COUNT(*) AS kills FROM `${project}.flagguard.findings` WHERE $__timeFilter(ts) AND action = 'killed'"
+          "rawSql": "SELECT COUNT(*) AS kills FROM `${project}.culprit.findings` WHERE $__timeFilter(ts) AND action = 'killed'"
         }
       ],
       "options": {
@@ -190,7 +190,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": 1,
-          "rawSql": "SELECT COUNT(DISTINCT flag) AS flags FROM `${project}.flagguard.findings` WHERE $__timeFilter(ts)"
+          "rawSql": "SELECT COUNT(DISTINCT flag) AS flags FROM `${project}.culprit.findings` WHERE $__timeFilter(ts)"
         }
       ],
       "options": {
@@ -239,7 +239,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": 0,
-          "rawSql": "SELECT TIMESTAMP_TRUNC(ts, DAY) AS time, signal, COUNT(*) AS findings\nFROM `${project}.flagguard.findings`\nWHERE $__timeFilter(ts)\nGROUP BY 1, 2\nORDER BY 1"
+          "rawSql": "SELECT TIMESTAMP_TRUNC(ts, DAY) AS time, signal, COUNT(*) AS findings\nFROM `${project}.culprit.findings`\nWHERE $__timeFilter(ts)\nGROUP BY 1, 2\nORDER BY 1"
         }
       ],
       "options": {
@@ -294,7 +294,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": 0,
-          "rawSql": "SELECT TIMESTAMP_TRUNC(ts, DAY) AS time, COUNT(*) AS kills\nFROM `${project}.flagguard.findings`\nWHERE $__timeFilter(ts) AND action = 'killed'\nGROUP BY 1\nORDER BY 1"
+          "rawSql": "SELECT TIMESTAMP_TRUNC(ts, DAY) AS time, COUNT(*) AS kills\nFROM `${project}.culprit.findings`\nWHERE $__timeFilter(ts) AND action = 'killed'\nGROUP BY 1\nORDER BY 1"
         }
       ],
       "options": {
@@ -349,7 +349,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": 1,
-          "rawSql": "SELECT ts, flag, variant, version, signal, crash_rate, control_rate, rate_ratio, top_segment, action\nFROM `${project}.flagguard.findings`\nWHERE $__timeFilter(ts)\nORDER BY ts DESC\nLIMIT 200"
+          "rawSql": "SELECT ts, flag, variant, version, signal, crash_rate, control_rate, rate_ratio, top_segment, action\nFROM `${project}.culprit.findings`\nWHERE $__timeFilter(ts)\nORDER BY ts DESC\nLIMIT 200"
         }
       ],
       "options": {
@@ -474,7 +474,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": 1,
-          "rawSql": "SELECT flag, alerts, kills, last_alert, last_action\nFROM `${project}.flagguard.flags_30d`\nORDER BY alerts DESC"
+          "rawSql": "SELECT flag, alerts, kills, last_alert, last_action\nFROM `${project}.culprit.flags_30d`\nORDER BY alerts DESC"
         }
       ],
       "options": {
