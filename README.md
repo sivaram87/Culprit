@@ -451,7 +451,7 @@ Each new alert also says where the variant's errors concentrate. Detection itsel
 
 - For the finding's flag, version and signal, the job counts affected users by **OS major version** (`Android 14.0.1` and `14.1` both count as `Android 14`) and by **device model**, for the variant and for control.
 - It compares **shares**. "Android 14 is 62% of the variant's affected users but 20% of control's" means the problem is concentrated there. Shares need no active-user counts, so this works the same for Crashlytics and Sentry.
-- The top 3 segments whose share is at least 10 points higher than control's are shown. If control has no errors at all (common for ANRs), the variant's biggest segments are shown.
+- The top 3 segments whose share is at least 10 points higher than control's are shown, and only when the gap is statistically clear (one-sided z-test, p < 0.05 split across the segments compared). When control has only a few errors, "35% vs 0%" on one device is often chance, so the line says "No OS or device stands out" rather than naming the wrong one. If control has no errors at all (common for ANRs), there is nothing to test against, and the variant's biggest segments are shown.
 - The breakdown runs after any kill, so it never delays one. If its query fails, the alert still goes out with "Breakdown unavailable."
 - The result is stored as JSON in the audit table's `segments` column.
 

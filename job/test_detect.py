@@ -128,6 +128,19 @@ def test_concentration_with_zero_error_control():
     assert all(s["control_share"] == 0.0 for s in segs)
 
 
+def test_concentration_ignores_noise_when_control_has_few_errors():
+    # Control has 2 errors: 35% vs 0% on one device is chance, 22 of 24 on one OS isn't.
+    rows = [
+        seg("on", "device", "Galaxy S23", 7), seg("on", "device", "Pixel 8", 6),
+        seg("on", "device", "iPhone 13", 6), seg("on", "device", "iPhone 15", 1),
+        seg("off", "device", "Pixel 8", 2),
+        seg("on", "os", "Android 14", 22), seg("on", "os", "iOS 18", 2),
+        seg("off", "os", "iOS 18", 2),
+    ]
+    segs = concentration(rows, "on", "off")
+    assert [s["segment"] for s in segs] == ["Android 14"], segs
+
+
 def test_describe():
     assert describe(None) == "Breakdown unavailable."
     assert describe([]) == "No OS or device stands out."
