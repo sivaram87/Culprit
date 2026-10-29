@@ -594,3 +594,7 @@ These will be added when there's a need:
 - Sequential testing (mSPRT) for faster, safer detection
 - Detection per OS version, for regressions too small to move the overall rate
 - Recording undos and false alarms in the audit table, so the dashboard can show current state and precision
+
+## Author
+
+Created by [Sivaram Jebamani](https://github.com/sivaram87).
