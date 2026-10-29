@@ -1,11 +1,11 @@
 """Run: python test_detect.py"""
-from detect import check_only_kill, detect, is_killed, kill_template
+from detect import Finding, action_for, check_only_kill, detect, is_killed, kill_template
 
 FLAGS = {"checkout": {"control": "off"}}
 
 
-def row(variant, users, crashed, version="5.2", flag="checkout"):
-    return dict(flag=flag, variant=variant, version=version, users=users, crashed_users=crashed)
+def row(variant, users, crashed, version="5.2", flag="checkout", signal="FATAL"):
+    return dict(flag=flag, variant=variant, version=version, signal=signal, users=users, crashed_users=crashed)
 
 
 def test_clear_regression_flagged():
@@ -56,6 +56,37 @@ def test_never_returns_control():
 
 def test_crashes_above_users_dont_crash_detector():
     detect([row("off", 1_000, 2_000), row("on", 1_000, 5_000)], FLAGS)
+
+
+def test_anr_regression_flagged_separately_from_crashes():
+    rows = [
+        row("off", 10_000, 20), row("on", 10_000, 21),
+        row("off", 10_000, 0, signal="ANR"), row("on", 10_000, 80, signal="ANR"),  # zero-ANR control
+    ]
+    [f] = detect(rows, FLAGS)
+    assert f.signal == "ANR" and f.control_rate == 0
+
+
+def test_each_signal_gets_its_own_finding():
+    rows = [
+        row("off", 10_000, 20), row("on", 10_000, 120),
+        row("off", 10_000, 300, signal="NON_FATAL"), row("on", 10_000, 900, signal="NON_FATAL"),
+    ]
+    assert sorted(f.signal for f in detect(rows, FLAGS)) == ["FATAL", "NON_FATAL"]
+
+
+def finding(signal):
+    return Finding("checkout", "on", "5.2", signal, 10_000, 120, 0.012, 0.002, 1e-9)
+
+
+def test_kill_policy():
+    opted_in = {"checkout": {"control": "off", "auto_kill": True}}
+    assert action_for(finding("FATAL"), opted_in, True, 0) == "kill"
+    assert action_for(finding("ANR"), opted_in, True, 0) == "kill"
+    assert action_for(finding("NON_FATAL"), opted_in, True, 0) == "alerted"  # never kills
+    assert action_for(finding("FATAL"), opted_in, True, 1) == "kill_capped"
+    assert action_for(finding("FATAL"), opted_in, False, 0) == "alerted"  # AUTO_KILL off
+    assert action_for(finding("FATAL"), FLAGS, True, 0) == "alerted"  # flag not opted in
 
 
 TEMPLATE = {

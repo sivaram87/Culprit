@@ -1,8 +1,8 @@
 # Flag Guard
 
-**Find the feature-flag variant behind a mobile crash spike, and switch it off automatically.**
+**Find the feature-flag variant behind a mobile crash, ANR or error spike, and switch it off automatically.**
 
-Crashlytics shows that crashes went up. Flag Guard shows *why*: "variant `on` of `new_checkout` crashes 6× more than control on v5.2". It posts that to Slack and, if you've allowed it, turns the variant off with a kill switch, all within about 15 minutes and without anyone being woken up to compare dashboards.
+Crashlytics shows that crashes, ANRs or non-fatal errors went up. Flag Guard shows *why*: "variant `on` of `new_checkout` crashes 6× more than control on v5.2". It posts that to Slack and, if you've allowed it, turns the variant off with a kill switch, all within about 15 minutes and without anyone being woken up to compare dashboards.
 
 ```
 :rotating_light: new_checkout=on on v5.2: crash rate 1.20% vs control 0.20%
@@ -61,8 +61,9 @@ Crash tools handle step 1. Flag Guard handles steps 2 to 4.
                         │ BigQuery export (streaming)
                         ▼
  ┌──────── Flag Guard job (Cloud Run, every 15 min) ────────┐
- │ 1. Query the last 24h: crashing users and active users   │
- │    for each (flag, variant, app version)                 │
+ │ 1. Query the last 24h: affected users and active users   │
+ │    per (flag, variant, app version, signal)              │
+ │    signal = FATAL | ANR | NON_FATAL                      │
  │ 2. detect(): compare each variant with control           │
  │ 3. Skip anything already reported in the last 24h        │
  │ 4. Optionally set killswitch_<flag>=true in Remote Config│
@@ -193,7 +194,7 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \
 ./deploy.sh
 ```
 
-`deploy.sh` is safe to re-run. It sets up:
+`deploy.sh` is safe to re-run. Re-running it is also how you upgrade: it adds the `signal` column to an audit table created by an older version. It sets up:
 
 - the service account `flagguard@<project>.iam.gserviceaccount.com`
 - the dataset and table `flagguard.actions`, which is the audit log
@@ -216,6 +217,8 @@ After roughly two weeks of alerts with no false alarms:
 2. Redeploy with `AUTO_KILL=1 ./deploy.sh ...`.
 
 Both are required. `AUTO_KILL=1` alone does nothing for flags without `auto_kill: true`.
+
+Only crash (`FATAL`) and `ANR` findings can kill a flag. `NON_FATAL` findings always alert only, because non-fatals are whatever the app chooses to log, which makes them too easy to trigger by accident or with spoofed reports.
 
 ## Configuration reference
 
@@ -245,20 +248,28 @@ Constants in `main.py`:
 
 ## Detection rules
 
-For each watched flag and **app version**, every non-control variant is compared with control. A variant is flagged only when **all** of these hold:
+For each watched flag, **app version** and **signal**, every non-control variant is compared with control. The signal comes from Crashlytics' `error_type`:
+
+| Signal | Meaning | Can auto-kill |
+|---|---|---|
+| `FATAL` | App crashed | yes |
+| `ANR` | App froze for 5s or more (Android only) | yes |
+| `NON_FATAL` | Error recorded with `recordError` / `recordException` | no, alert only | A variant is flagged only when **all** of these hold:
 
 | Check | Default | Why |
 |---|---|---|
 | Users in variant and control | ≥ 500 each | Small samples are noise |
-| Crashing users in variant | ≥ 10 | One bad device shouldn't trigger an alert |
+| Affected users in variant | ≥ 10 | One bad device shouldn't trigger an alert |
 | Variant rate ÷ control rate | ≥ 2× | Statistically significant but trivial differences aren't worth a page |
 | One-sided two-proportion z-test | p < `ALPHA` ÷ number of comparisons | Bonferroni correction: 20 flags checked every run shouldn't mean 20 chances of a false alarm |
 
 Details:
-- Units are **distinct crashing installs** (`installation_uuid`) over **distinct active installs** (`user_pseudo_id`). The two come from separate exports, so the detector caps crashes at the user count.
+- Each signal is compared on its own: an ANR regression is flagged even when the crash rate is flat.
+- Every (flag, version) gets a row for each signal even when the count is zero, so a control group with no ANRs still counts as a control.
+- Units are **distinct affected installs** (`installation_uuid`) over **distinct active installs** (`user_pseudo_id`). The two come from separate exports, so the detector caps crashes at the user count.
 - Breaking results down by version means a crash that exists only in v5.2 isn't hidden by healthy older versions.
 - The control variant is never flagged.
-- A (flag, variant, version) already reported in the last 24h isn't reported again.
+- A (flag, variant, version, signal) already reported in the last 24h isn't reported again.
 
 ## Slack actions
 
@@ -266,7 +277,7 @@ Every alert carries one action:
 
 | Action | Meaning |
 |---|---|
-| `alerted` | Alert only, either because auto-kill is off or because the flag isn't opted in |
+| `alerted` | Alert only: auto-kill is off, the flag isn't opted in, or the signal is `NON_FATAL` |
 | `killed` | `killswitch_<flag>` was set to `true` |
 | `already_killed` | The kill switch was already on |
 | `kill_capped` | The daily auto-kill cap was reached, so it's alert only. Kill by hand if needed. |
@@ -292,6 +303,9 @@ Covers:
 - a missing control or an unwatched flag is skipped
 - the Bonferroni correction suppresses a marginal result among 20 flags
 - the control variant is never returned
+- an ANR regression is flagged even when crashes are flat, including against a zero-ANR control
+- each signal produces its own finding
+- kill policy: non-fatals never kill, the daily cap applies, and both opt-ins are required
 - bad data (crashes greater than users) doesn't crash the detector
 - `kill_template` changes only `killswitch_<flag>`
 - the safety check rejects any other edit
@@ -309,7 +323,7 @@ Covers:
 | Risk | Mitigation |
 |---|---|
 | The service account can edit any Remote Config parameter (the role can't be scoped further) | `check_only_kill` refuses to write anything except `killswitch_<flag>=true`. The check runs on every write and is covered by tests. Writes use the ETag (`If-Match`), so a concurrent human edit isn't overwritten. Remote Config history allows one-click rollback. |
-| Fake crash reports: the Firebase API key ships in the app, so crash data can be forged to get a feature killed | A kill only sends users to the control path. Kills need ≥ 10 distinct crashing installs plus a significant result, are capped at 1 per day, and every one is posted to Slack. |
+| Fake crash reports: the Firebase API key ships in the app, so crash data can be forged to get a feature killed | A kill only sends users to the control path. Kills need ≥ 10 distinct affected installs plus a significant result, are capped at 1 per day, and every one is posted to Slack. Non-fatal errors, the easiest signal to fake, can never trigger a kill. |
 | A bad detection kills a winning experiment | Alert-only is the default. Auto-kill is opt-in per flag through a reviewed PR, and must also be enabled globally with `AUTO_KILL=1`. |
 | Secrets leak | The Slack webhook lives only in Secret Manager. There are no service-account key files, because Cloud Run attaches the account. |
 | PII | Crash keys and user properties contain only flag name and variant. Slack messages and audit rows contain only aggregate counts. |
@@ -318,7 +332,8 @@ Covers:
 
 ## Limitations
 
-- **Crashes only.** ANRs and non-fatal errors aren't counted yet.
+- **ANRs are Android-only.** Crashlytics doesn't report iOS hangs as ANRs, so iOS ANR counts are always zero and never trigger.
+- **One set of thresholds for all signals.** Non-fatal rates are usually much higher than crash rates. That's fine for a ratio test, but noisy apps may want separate thresholds later.
 - **Kill-switch parameters must not be inside a Remote Config parameter group.** If one is, the API rejects the update and nothing changes; the job fails loudly.
 - **The flag list is kept in two places** (`Flags.watched` and `flags.json`) and must match.
 - **Fixed thresholds plus a z-test.** Simple and predictable, but slower to react than sequential testing on low-traffic flags.
@@ -329,7 +344,6 @@ Covers:
 
 These will be added when there's a need:
 
-- ANR and non-fatal error signals (same query with a different filter)
 - Sentry and Statsig adapters
 - Sequential testing (mSPRT) for faster, safer detection
 - Breakdown by device and OS

@@ -8,6 +8,9 @@ from dataclasses import dataclass
 # (e.g. mSPRT) if false alarms or detection delay become a problem.
 DEFAULTS = dict(min_users=500, min_crashes=10, min_ratio=2.0, alpha=0.001)
 KILL_PREFIX = "killswitch_"
+SIGNALS = ("FATAL", "NON_FATAL", "ANR")  # Crashlytics error_type values
+# Non-fatals are whatever the app chooses to log: too easy to trip (or spoof) to kill a feature.
+KILL_SIGNALS = {"FATAL", "ANR"}
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,7 @@ class Finding:
     flag: str
     variant: str
     version: str
+    signal: str
     users: int
     crashed_users: int
     crash_rate: float
@@ -32,24 +36,25 @@ def p_value(c1, n1, c0, n0):
 
 
 def detect(rows, flags, **thresholds):
-    """rows: dicts with flag, variant, version, users, crashed_users.
+    """rows: dicts with flag, variant, version, signal, users, crashed_users
+    (crashed_users = distinct users with that signal).
     flags: {name: {"control": "<variant>", ...}} from flags.json."""
     t = {**DEFAULTS, **thresholds}
     groups = {}
     for r in rows:
         if r["flag"] in flags:
-            groups.setdefault((r["flag"], r["version"]), {})[r["variant"]] = r
+            groups.setdefault((r["flag"], r["version"], r["signal"]), {})[r["variant"]] = r
 
     pairs = []
-    for (flag, version), by_variant in groups.items():
+    for (flag, version, signal), by_variant in groups.items():
         control_name = flags[flag]["control"]
         control = by_variant.get(control_name)
         if control is None:
             continue
-        pairs += [(flag, version, v, r, control) for v, r in by_variant.items() if v != control_name]
+        pairs += [(flag, version, signal, v, r, control) for v, r in by_variant.items() if v != control_name]
 
     findings = []
-    for flag, version, variant, r, c in pairs:
+    for flag, version, signal, variant, r, c in pairs:
         n1, n0 = r["users"], c["users"]
         # Crash and user counts come from different exports; never let crashes exceed users.
         c1, c0 = min(r["crashed_users"], n1), min(c["crashed_users"], n0)
@@ -60,8 +65,15 @@ def detect(rows, flags, **thresholds):
             continue
         p = p_value(c1, n1, c0, n0)
         if p < t["alpha"] / len(pairs):  # Bonferroni across every comparison this run
-            findings.append(Finding(flag, variant, version, n1, c1, rate, base, p))
+            findings.append(Finding(flag, variant, version, signal, n1, c1, rate, base, p))
     return findings
+
+
+def action_for(f, flags, auto_kill, kills_today, max_kills=1):
+    """Kill policy: "kill", "kill_capped" or "alerted"."""
+    if not (auto_kill and flags[f.flag].get("auto_kill") and f.signal in KILL_SIGNALS):
+        return "alerted"
+    return "kill" if kills_today < max_kills else "kill_capped"
 
 
 def is_killed(template, flag):

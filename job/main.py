@@ -29,17 +29,17 @@ RC_URL = "https://firebaseremoteconfig.googleapis.com/v1/projects/{}/remoteConfi
 MAX_KILLS_PER_DAY = 1
 WINDOW = dt.timedelta(hours=24)
 
-# Crashing users and active users per (flag, variant, version). Both sides tag
+# Affected users and active users per (flag, variant, version, signal). Both sides tag
 # the same key: Crashlytics custom key / Analytics user property "ff_<flag>".
 SQL = """
 WITH crashes AS (
   SELECT SUBSTR(k.key, 4) AS flag, k.value AS variant,
-         application.display_version AS version,
+         application.display_version AS version, error_type AS signal,
          COUNT(DISTINCT installation_uuid) AS crashed_users
   FROM `{crash_table}`, UNNEST(custom_keys) AS k
-  WHERE is_fatal AND STARTS_WITH(k.key, 'ff_')
+  WHERE STARTS_WITH(k.key, 'ff_')
     AND event_timestamp BETWEEN @start AND @end
-  GROUP BY 1, 2, 3
+  GROUP BY 1, 2, 3, 4
 ), users AS (
   SELECT SUBSTR(p.key, 4) AS flag, p.value.string_value AS variant,
          app_info.version AS version,
@@ -50,8 +50,10 @@ WITH crashes AS (
     AND event_timestamp BETWEEN UNIX_MICROS(@start) AND UNIX_MICROS(@end)
   GROUP BY 1, 2, 3
 )
-SELECT flag, variant, version, users, IFNULL(crashed_users, 0) AS crashed_users
-FROM users LEFT JOIN crashes USING (flag, variant, version)
+-- Cross join so a group with zero ANRs still gets a row (else its control looks "missing").
+SELECT flag, variant, version, signal, users, IFNULL(crashed_users, 0) AS crashed_users
+FROM users CROSS JOIN UNNEST({signals}) AS signal
+LEFT JOIN crashes USING (flag, variant, version, signal)
 """
 
 
@@ -63,7 +65,11 @@ def query(bq, sql, **params):
 
 
 def counts(bq, end):
-    sql = SQL.format(crash_table=os.environ["CRASHLYTICS_TABLE"], analytics=os.environ["ANALYTICS_DATASET"])
+    sql = SQL.format(
+        crash_table=os.environ["CRASHLYTICS_TABLE"],
+        analytics=os.environ["ANALYTICS_DATASET"],
+        signals=list(detect.SIGNALS),  # Python list repr is a valid BigQuery string array
+    )
     return query(bq, sql, start=end - WINDOW, end=end)
 
 
@@ -95,8 +101,9 @@ def slack(f, action):
         "kill_capped": f"Daily auto-kill cap reached. Set `killswitch_{f.flag}` to true by hand if needed.",
         "alerted": f"Alert only. To stop it, set `killswitch_{f.flag}` to true in Remote Config.",
     }[action]
+    what = {"FATAL": "crash", "ANR": "ANR", "NON_FATAL": "non-fatal error"}[f.signal]
     text = (
-        f":rotating_light: *{f.flag}={f.variant}* on v{f.version}: crash rate {f.crash_rate:.2%} "
+        f":rotating_light: *{f.flag}={f.variant}* on v{f.version}: {what} rate {f.crash_rate:.2%} "
         f"vs control {f.control_rate:.2%} ({f.crashed_users}/{f.users} users, p={f.p:.1e}). "
         f"Action: *{action}*. {next_step}"
     )
@@ -116,17 +123,19 @@ def run(bq, flags, now):
     if not findings:
         return
     recent = query(
-        bq, f"SELECT flag, variant, version, action FROM `{os.environ['AUDIT_TABLE']}` WHERE ts > @since",
+        bq,
+        f"SELECT flag, variant, version, signal, action FROM `{os.environ['AUDIT_TABLE']}` WHERE ts > @since",
         since=now - WINDOW,
     )
-    seen = {(a["flag"], a["variant"], a["version"]) for a in recent}
+    seen = {(a["flag"], a["variant"], a["version"], a["signal"]) for a in recent}
     kills = sum(a["action"] == "killed" for a in recent)
+    auto_kill = os.environ.get("AUTO_KILL") == "1"
     for f in findings:
-        if (f.flag, f.variant, f.version) in seen:
+        if (f.flag, f.variant, f.version, f.signal) in seen:
             continue  # already alerted in the last 24h
-        action = "alerted"
-        if os.environ.get("AUTO_KILL") == "1" and flags[f.flag].get("auto_kill"):
-            action = kill(f.flag) if kills < MAX_KILLS_PER_DAY else "kill_capped"
+        action = detect.action_for(f, flags, auto_kill, kills, MAX_KILLS_PER_DAY)
+        if action == "kill":
+            action = kill(f.flag)
             kills += action == "killed"
         slack(f, action)  # Slack before audit: a lost audit row means a repeat alert, not a missed one
         audit(bq, f, action, now)

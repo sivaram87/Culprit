@@ -17,7 +17,10 @@ gcloud iam service-accounts create flagguard --project "$PROJECT" --display-name
 # Least privilege: read the two exports, run queries, write only the audit table, edit Remote Config.
 bq --project_id "$PROJECT" mk --dataset flagguard || true
 bq --project_id "$PROJECT" mk --table "$PROJECT:flagguard.actions" \
-  ts:TIMESTAMP,flag:STRING,variant:STRING,version:STRING,users:INTEGER,crashed_users:INTEGER,crash_rate:FLOAT,control_rate:FLOAT,p:FLOAT,action:STRING || true
+  ts:TIMESTAMP,flag:STRING,variant:STRING,version:STRING,signal:STRING,users:INTEGER,crashed_users:INTEGER,crash_rate:FLOAT,control_rate:FLOAT,p:FLOAT,action:STRING || true
+# Upgrade path for audit tables created before ANR/non-fatal support.
+bq --project_id "$PROJECT" query --use_legacy_sql=false \
+  "ALTER TABLE \`$AUDIT_TABLE\` ADD COLUMN IF NOT EXISTS signal STRING"
 for ds in "${CRASH_DATASET/./:}" "$PROJECT:$ANALYTICS_DATASET"; do
   bq add-iam-policy-binding --member "serviceAccount:$SA" --role roles/bigquery.dataViewer "$ds"
 done
