@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Culprit Test Results</title>
+<meta name="author" content="Sivaram Jebamani">
+<meta name="description" content="How Culprit was tested end to end: a local sandbox, an iOS demo app, and 150 simulated runs through the real job, with the key results.">
+<link rel="icon" href="icon.svg?v=2" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.png?v=2">
+<style>
+:root {
+  --bg: #fbfaf8; --surface: #ffffff; --surface-2: #f3f1ed; --text: #1c1b19; --muted: #615d56;
+  --border: #e4e0d8; --accent: #c93434; --accent-soft: #fbe9e7; --ok: #1e7d4f; --ok-soft: #e3f3ea;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131211; --surface: #1c1b19; --surface-2: #252320; --text: #efece6; --muted: #a59f95;
+    --border: #34312c; --accent: #ef6a5f; --accent-soft: #3a1f1c; --ok: #5cc48f; --ok-soft: #173326;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131211; --surface: #1c1b19; --surface-2: #252320; --text: #efece6; --muted: #a59f95;
+  --border: #34312c; --accent: #ef6a5f; --accent-soft: #3a1f1c; --ok: #5cc48f; --ok-soft: #173326;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+header.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+header.top .bar { max-width: 1080px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 18px; height: 56px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--text); text-decoration: none; font-size: 18px; }
+header nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+header nav a { color: var(--muted); text-decoration: none; }
+header nav a:hover, header nav a[aria-current] { color: var(--text); }
+.theme-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 14px; font-family: inherit; }
+@media (max-width: 600px) { header nav { display: none; } .theme-btn { margin-left: auto; } }
+
+main { max-width: 960px; margin: 0 auto; padding: 48px 16px 40px; }
+.kicker { font: 600 13px/1 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.12; letter-spacing: -0.02em; margin: 14px 0 12px; }
+.dek { font-size: 19px; color: var(--muted); margin: 0 0 8px; max-width: 720px; }
+.meta { font-size: 14px; color: var(--muted); }
+h2 { font-size: 26px; line-height: 1.25; margin: 56px 0 10px; letter-spacing: -0.01em; scroll-margin-top: 72px; }
+h3 { font-size: 18px; margin: 24px 0 6px; }
+p { max-width: 720px; }
+code { font: 0.85em var(--mono); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font: 14px/1.6 var(--mono); max-width: 720px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+
+/* Demo */
+.demo { display: grid; grid-template-columns: minmax(0, 300px) 1fr; gap: 32px; align-items: start; margin-top: 20px; }
+@media (max-width: 720px) { .demo { grid-template-columns: 1fr; justify-items: center; } }
+.demo video { width: 100%; max-width: 300px; border-radius: 28px; border: 1px solid var(--border); background: #000; display: block; }
+.chapters { list-style: none; padding: 0; margin: 0; width: 100%; }
+.chapters li { margin: 0 0 6px; }
+.chapters button { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 52px 1fr; gap: 12px; width: 100%; padding: 8px 10px; border-radius: 10px; }
+.chapters button:hover, .chapters button:focus-visible { background: var(--surface-2); }
+.chapters button[aria-current="true"] { background: var(--accent-soft); }
+.chapters time { font: 600 14px/1.5 var(--mono); color: var(--accent); }
+.chapters b { display: block; font-size: 16px; }
+.chapters span { display: block; color: var(--muted); font-size: 14px; line-height: 1.45; }
+
+/* Tiles */
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 22px 0 8px; }
+@media (max-width: 720px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { padding: 16px 18px; }
+.tile .label { font-size: 13px; color: var(--muted); }
+.tile .value { font-size: 34px; font-weight: 700; line-height: 1.15; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.tile .sub { font-size: 13px; color: var(--muted); }
+
+/* Bar chart */
+.chart { padding: 18px 20px 14px; margin-top: 14px; }
+.chart h3 { margin: 0 0 2px; }
+.chart .note { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+.bars { display: grid; grid-template-columns: max-content 1fr; gap: 10px 14px; align-items: center; }
+.bars .name { font-size: 14px; }
+.bars .name small { display: block; color: var(--muted); font-size: 12px; }
+.track { position: relative; height: 22px; display: flex; align-items: center; margin-right: 52px; }
+.track::before { content: ""; position: absolute; inset: 10px 0; border-top: 1px dashed var(--border); }
+.bar-fill { position: relative; flex: none; height: 14px; background: var(--ok); border-radius: 0 4px 4px 0; min-width: 2px; outline: none; }
+.bar-val { position: absolute; left: calc(100% + 8px); top: -1px; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text); }
+.bar-fill .tip { position: absolute; left: 100%; bottom: calc(100% + 8px); transform: translateX(-50%); white-space: nowrap; background: var(--text); color: var(--bg); font-size: 12px; padding: 4px 8px; border-radius: 6px; opacity: 0; pointer-events: none; transition: opacity .12s; }
+.bar-fill:hover .tip, .bar-fill:focus .tip { opacity: 1; }
+.axis { grid-column: 2; display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-right: 52px; }
+
+/* Table */
+.table-wrap { overflow-x: auto; margin-top: 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { font-weight: 600; color: var(--muted); font-size: 13px; }
+td.num, th.num { text-align: right; }
+
+figure { margin: 18px 0 0; }
+figure img { width: 100%; max-width: 800px; height: auto; border-radius: 12px; border: 1px solid var(--border); display: block; }
+figcaption { font-size: 14px; color: var(--muted); margin-top: 8px; max-width: 720px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 900px; }
+@media (max-width: 720px) { .two { grid-template-columns: 1fr; } }
+.two section { padding: 16px 18px 4px; }
+.two h3 { margin-top: 0; }
+.two ul { padding-left: 18px; font-size: 15px; }
+.error { color: var(--accent); }
+footer { max-width: 960px; margin: 0 auto; padding: 24px 16px 56px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <a class="brand" href="./" aria-label="Culprit home">
+      <img src="icon.svg?v=2" width="26" height="26" alt="">
+      Culprit
+    </a>
+    <nav aria-label="Site"><a href="./">Home</a><a href="./#setup">Setup</a><a href="story.html">Story</a><a href="testing.html" aria-current="page">Testing</a><a href="https://github.com/sivaram87/Culprit">GitHub</a></nav>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle dark mode">◐ Theme</button>
+  </div>
+</header>
+
+<main>
+  <div class="kicker">Testing</div>
+  <h1>Culprit, tested end to end</h1>
+  <p class="dek">A local sandbox stands in for the flag tool, crash reporting and Slack. A real iOS app and thousands of simulated users break a feature, and the real Culprit job has to find it, name it and switch it off.</p>
+  <p class="meta" id="generated">Loading results…</p>
+
+  <h2 id="demo">The demo, in one minute</h2>
+  <p>The sample iOS app "Bean There" reads its watched flag only through <code>Flags.swift</code>. In variant <code>on</code> its new checkout is deliberately broken. Click a step to jump to it.</p>
+  <div class="demo">
+    <video id="video" src="demo.mp4" poster="demo-poster.jpg" controls muted playsinline preload="metadata" aria-label="Screen recording of the Bean There demo app being crashed and then rescued by Culprit's kill switch"></video>
+    <ol class="chapters" id="chapters">
+      <li><button data-t="0"><time>0:00</time><span><b>A new install opens the app</b>It fetches flags from the sandbox.</span></button></li>
+      <li><button data-t="6"><time>0:06</time><span><b>It lands in variant on</b><code>new_checkout</code> is <code>on</code> and the kill switch is off.</span></button></li>
+      <li><button data-t="12"><time>0:12</time><span><b>The new checkout</b>Each button triggers one signal Culprit watches.</span></button></li>
+      <li><button data-t="17"><time>0:17</time><span><b>Save card logs a handled error</b>A NON_FATAL event, tagged <code>ff_new_checkout=on</code>.</span></button></li>
+      <li><button data-t="28"><time>0:28</time><span><b>Pay crashes the app</b>The crash is saved to disk, like a crash SDK does.</span></button></li>
+      <li><button data-t="40"><time>0:40</time><span><b>Reopen: the crash uploads</b>Off camera, 3,000 simulated users join, and the job runs. It finds the variant crashing about 8× more than control and turns the kill switch on.</span></button></li>
+      <li><button data-t="47"><time>0:47</time><span><b>Refresh flags</b>The kill switch reads <code>on</code>, so <code>Flags.variant()</code> now returns <code>off</code>.</span></button></li>
+      <li><button data-t="54"><time>0:54</time><span><b>Checkout is safe again</b>Same user, classic checkout. Pay works.</span></button></li>
+    </ol>
+  </div>
+
+  <h2 id="results">Key results</h2>
+  <p>Five scenarios, 30 random seeds each, 3,000 users per run (about 1,500 per variant), all run with auto-kill on. Every run goes through the real <code>run()</code> in <code>job/main.py</code>: thresholds, the z-test, dedupe, kill policy, breakdown, Slack text and the audit row.</p>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="card chart">
+    <h3>Runs handled correctly, by scenario</h3>
+    <p class="note">Healthy: no alert at all. Broken: the right signal was found and got the right action (killed for crash and ANR, alert only for non-fatal errors).</p>
+    <div class="bars" id="bars" role="img" aria-label="Bar chart of runs handled correctly by scenario; the same numbers are in the table below"></div>
+  </div>
+
+  <div class="table-wrap card">
+    <table>
+      <thead><tr><th>Scenario</th><th>What's broken</th><th class="num">Runs</th><th class="num">Found</th><th class="num">Right action</th><th class="num">Other alerts</th><th class="num">Breakdown</th><th class="num">Median ratio</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <h3>Reading the misses</h3>
+  <p>Every miss was a run where the regression didn't clear Culprit's deliberately strict bar: at least 10 affected users, at least 2× control, and p below 0.001 split across the three signals. With about 30 crashes in 1,500 users, random noise sometimes leaves the gap just under it. The Android 14 scenario misses more often because only a quarter of users carry the bug, so the overall rate rises less. In production the job reruns every 15 minutes over a 24-hour window, and more users give the test more power. The trade is intentional: a missed run costs one more run, a false kill costs a working feature.</p>
+
+  <h2 id="dashboard">The sandbox dashboard</h2>
+  <p>The sandbox serves a live page at <code>http://localhost:8787/</code> that refreshes every 3 seconds. This is the Android 14 scenario after one job run with auto-kill:</p>
+  <figure>
+    <img src="sandbox-dashboard.jpg" width="800" height="600" alt="Culprit sandbox page: kill switch is ON; the Slack alert reads new_checkout=on crash rate 2.35% vs control 0.33%, action killed, concentrated in Android 14 (91% vs 20% control); a table of users and affected users per variant and signal; and one audit row with action killed.">
+    <figcaption>Kill switch on, the Slack alert with the OS breakdown, counts per variant and signal for the last 24 hours, and the audit row. <b>Turn off (undo kill)</b> and <b>Reset everything</b> work from the page.</figcaption>
+  </figure>
+
+  <h2 id="coverage">What this does and doesn't prove</h2>
+  <div class="two">
+    <section class="card">
+      <h3 style="color: var(--ok)">Covered by the sandbox</h3>
+      <ul>
+        <li>Detection: thresholds, z-test and Bonferroni correction</li>
+        <li>Kill policy: auto-kill opt-in, non-fatal errors never kill</li>
+        <li>No repeat alert within 24 hours</li>
+        <li>OS and device breakdown, and the Slack text</li>
+        <li>Audit rows</li>
+        <li>The app side: wrapper, tagging, kill switch serving control</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h3 style="color: var(--accent)">Needs a staging project</h3>
+      <ul>
+        <li>The BigQuery SQL against real Crashlytics and Analytics exports</li>
+        <li>The Sentry queries and tag names</li>
+        <li>Real Remote Config and Statsig writes</li>
+        <li>Crash capture by a real SDK (iOS hangs need Sentry)</li>
+        <li>Deploy, scheduler and IAM</li>
+      </ul>
+    </section>
+  </div>
+  <p>The staging checklist is in the <a href="https://github.com/sivaram87/Culprit#testing">README</a>.</p>
+
+  <h2 id="run">Run it yourself</h2>
+  <p>Python 3 only, no accounts:</p>
+<pre>python3 sandbox/server.py                     # then open http://localhost:8787/
+cd sandbox && python3 simulate.py crash && python3 run_job.py --auto-kill
+python3 benchmark.py                           # regenerates the numbers on this page</pre>
+  <p>For the app, open <code>sample/ios/CulpritDemo.xcodeproj</code> in Xcode and run it on any iPhone simulator while the sandbox is running.</p>
+</main>
+
+<footer>Culprit by Sivaram Jebamani · open source on <a href="https://github.com/sivaram87/Culprit">GitHub</a> · <a href="./">Back to the homepage</a></footer>
+
+<script>
+(function () {
+  const root = document.documentElement;
+  try { const t = localStorage.getItem("culprit-theme"); if (t) root.dataset.theme = t; } catch (e) {}
+  document.getElementById("themeBtn").addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("culprit-theme", root.dataset.theme); } catch (e) {}
+  });
+
+  // Video chapters: click to seek, highlight the one playing.
+  const video = document.getElementById("video");
+  const chapters = [...document.querySelectorAll("#chapters button")];
+  chapters.forEach((b) => b.addEventListener("click", () => { video.currentTime = +b.dataset.t; video.play().catch(() => {}); }));
+  video.addEventListener("timeupdate", () => {
+    let cur = chapters[0];
+    for (const b of chapters) if (video.currentTime >= +b.dataset.t) cur = b;
+    chapters.forEach((b) => b.setAttribute("aria-current", b === cur ? "true" : "false"));
+  });
+
+  const WHAT = {
+    healthy: ["Healthy", "Nothing"],
+    crash: ["Crash", "on crashes 10× more"],
+    anr: ["ANR", "on freezes 10× more"],
+    nonfatal: ["Non-fatal", "on logs 10× more errors"],
+    android14: ["Android 14 crash", "on crashes, Android 14 only"],
+  };
+  const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0) + "%";
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  fetch("results.json", { cache: "no-cache" }).then((r) => r.json()).then((d) => {
+    const s = d.scenarios, broken = Object.keys(s).filter((k) => k !== "healthy");
+    const runs = Object.values(s).reduce((n, x) => n + x.runs, 0);
+    const brokenRuns = broken.reduce((n, k) => n + s[k].runs, 0);
+    const found = broken.reduce((n, k) => n + s[k].detected, 0);
+    const actions = broken.reduce((n, k) => n + s[k].detected, 0);
+    const wrongActions = broken.reduce((n, k) => n + s[k].detected - s[k].correct_action, 0);
+    const falseAlarms = s.healthy.detected + Object.values(s).reduce((n, x) => n + x.false_alerts, 0);
+    const a14 = s.android14;
+    const ms = Object.values(s).map((x) => x.median_job_ms).sort((a, b) => a - b)[2];
+
+    document.getElementById("generated").textContent =
+      `${runs} runs · ${d.users_per_run.toLocaleString()} users each · generated ${d.generated} by sandbox/benchmark.py`;
+
+    const tiles = [
+      ["Broken features caught", pct(found, brokenRuns), `${found} of ${brokenRuns} broken runs`],
+      ["False alarms", String(falseAlarms), `in ${runs} runs, including 30 healthy ones`],
+      ["Wrong actions", String(wrongActions), `of ${actions} alerts and kills`],
+      ["Non-fatal errors killed", String(s.nonfatal.detected - s.nonfatal.correct_action), `${s.nonfatal.detected} alerted, never killed`],
+      ["Breakdown named Android 14", pct(a14.breakdown_right, a14.detected), `${a14.breakdown_right} of ${a14.detected}; never an iOS segment`],
+      ["Unit tests passing", `${d.unit_tests}/${d.unit_tests}`, `job runs in ~${ms} ms in the sandbox`],
+    ];
+    const tl = document.getElementById("tiles");
+    for (const [label, value, sub] of tiles) {
+      const t = el("div", "tile card");
+      t.append(el("div", "label", label), el("div", "value", value), el("div", "sub", sub));
+      tl.append(t);
+    }
+
+    const bars = document.getElementById("bars");
+    for (const [k, x] of Object.entries(s)) {
+      const good = k === "healthy" ? x.runs - x.false_alerts - x.detected : x.correct_action;
+      const name = el("div", "name", WHAT[k][0]);
+      name.append(el("small", null, WHAT[k][1]));
+      const track = el("div", "track");
+      const fill = el("div", "bar-fill");
+      fill.style.width = (good / x.runs) * 100 + "%";
+      fill.tabIndex = 0;
+      fill.setAttribute("aria-label", `${WHAT[k][0]}: ${good} of ${x.runs} runs`);
+      fill.append(el("span", "tip", `${good} of ${x.runs} runs`), el("span", "bar-val", pct(good, x.runs)));
+      track.append(fill);
+      bars.append(name, track);
+    }
+    const axis = el("div", "axis");
+    ["0%", "50%", "100%"].forEach((t) => axis.append(el("span", null, t)));
+    bars.append(el("div"), axis);
+
+    const rows = document.getElementById("rows");
+    for (const [k, x] of Object.entries(s)) {
+      const tr = document.createElement("tr");
+      const bd = k === "android14" ? `${x.breakdown_right}/${x.detected} right`
+        : x.detected ? `${x.detected - x.breakdown_noise}/${x.detected} clean` : "—";
+      const cells = [WHAT[k][0], WHAT[k][1], x.runs, k === "healthy" ? "—" : `${x.detected}`,
+        k === "healthy" ? "—" : `${x.correct_action}/${x.detected}`, x.false_alerts + (k === "healthy" ? x.detected : 0),
+        bd, x.median_ratio ? x.median_ratio + "×" : "—"];
+      cells.forEach((c, i) => tr.append(el("td", i >= 2 ? "num" : null, String(c))));
+      rows.append(tr);
+    }
+  }).catch(() => {
+    document.getElementById("generated").innerHTML = '<span class="error">Couldn\'t load results.json. Serve this folder over HTTP to see the numbers.</span>';
+  });
+})();
+</script>
+</body>
+</html>

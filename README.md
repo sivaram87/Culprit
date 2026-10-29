@@ -6,7 +6,7 @@
 
 Your crash tool shows that crashes, ANRs or non-fatal errors went up. Culprit shows *why*: "variant `on` of `new_checkout` crashes 6× more than control on v5.2". It posts that to Slack and, if you've allowed it, turns the variant off with a kill switch, all within about 15 minutes and without anyone being woken up to compare dashboards.
 
-**Website:** https://sivaram87.github.io/Culprit/ has an interactive detector demo and a setup guide for your stack. The [story behind Culprit](https://sivaram87.github.io/Culprit/story.html) explains why it exists, its pros and cons, and the roadmap.
+**Website:** https://sivaram87.github.io/Culprit/ has an interactive detector demo and a setup guide for your stack. The [story behind Culprit](https://sivaram87.github.io/Culprit/story.html) explains why it exists, its pros and cons, and the roadmap. The [test results page](https://sivaram87.github.io/Culprit/testing.html) has a one-minute demo of the iOS sample app and the key metrics from 150 sandbox runs.
 
 Works with **Crashlytics or Sentry** for crash data, and **Firebase Remote Config or Statsig** for flags, in any combination.
 
@@ -115,6 +115,7 @@ sandbox/
   server.py                Local stand-in for flag tool, crash data, Slack and audit table
   simulate.py              Fake app traffic with a chosen bug
   run_job.py               Runs the real job against the sandbox
+  benchmark.py             Every scenario x 30 seeds -> docs/results.json
 sample/ios/                SwiftUI demo app using Flags.swift (sandbox or Firebase)
 job/
   detect.py                Detection, kill policy and safety checks, no side effects
@@ -153,7 +154,7 @@ Within a few seconds the page shows the Slack alert, the audit row, and `killswi
 | `nonfatal` | NON_FATAL alert, never a kill |
 | `android14` | FATAL alert, breakdown names Android 14 |
 
-Use **Turn off (undo kill)** or **Reset everything** on the page between runs. `run_job.py --every 30` repeats the job like the scheduler does, and running it twice shows that an alert isn't repeated within 24 hours.
+Use **Turn off (undo kill)** or **Reset everything** on the page between runs. `python3 benchmark.py` runs every scenario 30 times and writes `docs/results.json`, which the [test results page](https://sivaram87.github.io/Culprit/testing.html) shows. `run_job.py --every 30` repeats the job like the scheduler does, and running it twice shows that an alert isn't repeated within 24 hours.
 
 **What the sandbox covers:** `job/main.py` `run()` and everything in `detect.py`: thresholds, the z-test, dedupe, kill policy, breakdown, Slack text and audit rows. **What it doesn't:** the BigQuery SQL, the Sentry queries, and the real Remote Config and Statsig writes. The sandbox's `/counts` and `/segments` return rows in the same shape those queries do. Test the real ones in a [staging project](#testing).
 
