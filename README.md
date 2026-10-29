@@ -27,6 +27,7 @@ Every finding is also logged to BigQuery, and a [Looker Studio or Grafana dashbo
 - [How it works](#how-it-works)
 - [Supported tools](#supported-tools)
 - [Repository layout](#repository-layout)
+- [Try it locally](#try-it-locally)
 - [Requirements](#requirements)
 - [Setup](#setup)
   - [1. Prepare your crash data source](#1-prepare-your-crash-data-source)
@@ -110,6 +111,11 @@ client/
   android/FlagsTest.kt     JUnit: kill switch serves control
 grafana/
   culprit.json           Importable Grafana dashboard (BigQuery plugin)
+sandbox/
+  server.py                Local stand-in for flag tool, crash data, Slack and audit table
+  simulate.py              Fake app traffic with a chosen bug
+  run_job.py               Runs the real job against the sandbox
+sample/ios/                SwiftUI demo app using Flags.swift (sandbox or Firebase)
 job/
   detect.py                Detection, kill policy and safety checks, no side effects
   main.py                  Crashlytics/BigQuery counts, Remote Config kill, Slack, audit, CLI
@@ -122,6 +128,52 @@ job/
   deploy.sh                One-shot GCP setup and deploy
   Dockerfile, requirements.txt
 ```
+
+## Try it locally
+
+The sandbox runs the whole loop on your Mac with no accounts: a fake app population, the real detection and kill logic, a fake Slack and a live page to watch. It needs only Python 3.
+
+```bash
+python3 sandbox/server.py
+```
+
+Open http://localhost:8787/, then in a second terminal:
+
+```bash
+cd sandbox && python3 simulate.py crash && python3 run_job.py --auto-kill
+```
+
+Within a few seconds the page shows the Slack alert, the audit row, and `killswitch_new_checkout` turned on. New simulated users now get control.
+
+| Scenario | Expect |
+|---|---|
+| `healthy` | No alert |
+| `crash` | FATAL alert (killed with `--auto-kill`) |
+| `anr` | ANR alert (killed with `--auto-kill`) |
+| `nonfatal` | NON_FATAL alert, never a kill |
+| `android14` | FATAL alert, breakdown names Android 14 |
+
+Use **Turn off (undo kill)** or **Reset everything** on the page between runs. `run_job.py --every 30` repeats the job like the scheduler does, and running it twice shows that an alert isn't repeated within 24 hours.
+
+**What the sandbox covers:** `job/main.py` `run()` and everything in `detect.py`: thresholds, the z-test, dedupe, kill policy, breakdown, Slack text and audit rows. **What it doesn't:** the BigQuery SQL, the Sentry queries, and the real Remote Config and Statsig writes. The sandbox's `/counts` and `/segments` return rows in the same shape those queries do. Test the real ones in a [staging project](#testing).
+
+### Sample iOS app
+
+`sample/ios` is a small SwiftUI shop ("Bean There") that wires `client/ios/Flags.swift` the way a real app should. The `on` variant of `new_checkout` is deliberately broken:
+
+| Button | Signal |
+|---|---|
+| Pay $24 with one tap | Crash (FATAL) |
+| Apply coupon | Main thread blocked 6 s (ANR / app hang) |
+| Save card | Handled error (NON_FATAL) |
+
+With the sandbox running, open `sample/ios/CulpritDemo.xcodeproj` in Xcode and run it on any iPhone simulator. The simulator reaches the sandbox at `localhost`. To use another address, set the `SANDBOX_URL` environment variable in the scheme. Like a crash SDK, the app saves a crash to disk and uploads it on the next launch.
+
+To see the full loop: tap **Become a new user** until `new_checkout` shows `on`, then crash it with **Pay**, and reopen the app. Then run `python3 simulate.py crash && python3 run_job.py --auto-kill`, and tap **Refresh flags**: the kill switch reads `on`, the app serves `off`, and checkout is the safe classic one.
+
+Where to look in the code:
+- `CulpritDemoApp.swift`: `Backend.start()` runs before any UI reads a flag. Checkout reads `Flags.variant("new_checkout")` and nothing else.
+- `Backend.swift`: the three hooks (`value`, `isKilled`, `tagSinks`) and `Flags.tag()` after every refresh. It has two versions. The Firebase one (Remote Config, Crashlytics, Analytics) compiles automatically once you add the Firebase packages; otherwise the sandbox one is used.
 
 ## Requirements
 
@@ -551,12 +603,26 @@ cd job && python3 test_detect.py && python3 test_adapters.py
 
 **App wrappers:** `FlagsTests.swift` / `FlagsTest.kt` check that the kill switch serves control. Add them to your app's test target. Set the `@testable import` module name to match your app.
 
-**End to end (staging project):**
-1. Add a watched flag `crash_demo` whose variant `b` crashes on purpose. Also add an ANR (block the main thread for more than 5s) and a recorded non-fatal error.
-2. Deploy with `MIN_USERS=20 MIN_CRASHES=3` and `AUTO_KILL=1`, with `"auto_kill": true` on `crash_demo`.
-3. Roll `b` out to test devices and trigger each error.
-4. Expect Slack alerts and the kill switch turned on within about 30 minutes. After the next fetch, devices serve control and the crashes stop.
-5. With Sentry, also run `python main.py --dry-run` and check that the counts match Sentry's own UI. That confirms the `SIGNAL_QUERIES` filters and that app-start traces carry the `ff_*` tags.
+**End to end (staging project):** this tests what the sandbox can't: the BigQuery SQL, the exports, and the real kill switch.
+
+1. **Firebase project.** Create a separate staging project in the Firebase console and add the iOS app with bundle id `dev.culprit.demo` (or your own app).
+2. **Exports.** In **Project settings → Integrations → BigQuery**, link the project and turn on export for **Crashlytics** (with streaming) and **Analytics** (daily plus streaming). Tables appear after the first events, which can take up to a day for Analytics.
+3. **Remote Config.** Add a condition `new_checkout_50` (user in random percentile ≤ 50) and these parameters:
+
+   | Key | Type | Default | `new_checkout_50` |
+   |---|---|---|---|
+   | `new_checkout` | String | `off` | `on` |
+   | `killswitch_new_checkout` | Boolean | `false` | |
+
+4. **Sample app on Firebase.** In Xcode, add the package `https://github.com/firebase/firebase-ios-sdk` with the products FirebaseAnalytics, FirebaseCrashlytics and FirebaseRemoteConfig, then add your `GoogleService-Info.plist` to the CulpritDemo target. The app switches to its Firebase backend on its own; the debug panel shows `Backend: Firebase`. Run it **without the debugger attached** when you crash it, or Crashlytics won't see the crash.
+5. **Job.** In `job/flags.json`, set `"auto_kill": true` on `new_checkout`. Deploy to the staging project with lower thresholds:
+   ```bash
+   cd job && MIN_USERS=20 MIN_CRASHES=3 AUTO_KILL=1 ./deploy.sh
+   ```
+6. **Traffic.** Run the app on several simulators or test devices. Erase a simulator between runs to get a new install and a new random percentile. Get at least 20 users on each variant and crash at least 3 `on` users.
+7. **Check.** Within about 30 minutes, expect a Slack alert and `killswitch_new_checkout` turned on in Remote Config. After the next fetch, the app shows `off` and the crashes stop. `python3 main.py --dry-run` against the staging project prints the same finding.
+
+Crashlytics doesn't report iOS app hangs (its ANR type is Android-only), so test the ANR path with Sentry's app-hang tracking or an Android build. With Sentry, also check that `python main.py --dry-run` counts match Sentry's own UI. That confirms the `SIGNAL_QUERIES` filters and that app-start traces carry the `ff_*` tags.
 
 ## Security
 

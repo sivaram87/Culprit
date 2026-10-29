@@ -7,7 +7,8 @@
 #                              optional SENTRY_URL (self-hosted / EU)
 #   FLAG_TOOL=firebase         Remote Config in $PROJECT
 #   FLAG_TOOL=statsig          needs STATSIG_CONSOLE_KEY (first deploy)
-# Always: PROJECT, SLACK_WEBHOOK_URL (first deploy). Optional: REGION, AUTO_KILL=1.
+# Always: PROJECT, SLACK_WEBHOOK_URL (first deploy). Optional: REGION, AUTO_KILL=1,
+#   MIN_USERS / MIN_CRASHES / MIN_RATIO / ALPHA (staging thresholds).
 #
 # Example: PROJECT=my-proj SIGNAL_SOURCE=sentry FLAG_TOOL=statsig SENTRY_ORG=acme \
 #          SENTRY_PROJECT_ID=42 SENTRY_AUTH_TOKEN=... STATSIG_CONSOLE_KEY=... SLACK_WEBHOOK_URL=... ./deploy.sh
@@ -50,6 +51,7 @@ bq add-iam-policy-binding --member "serviceAccount:$SA" --role roles/bigquery.da
 gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role roles/bigquery.jobUser --condition None
 
 ENV="GCP_PROJECT=$PROJECT,AUDIT_TABLE=$AUDIT_TABLE,AUTO_KILL=${AUTO_KILL:-0},SIGNAL_SOURCE=$SIGNAL_SOURCE,FLAG_TOOL=$FLAG_TOOL"
+for k in MIN_USERS MIN_CRASHES MIN_RATIO ALPHA; do [ -n "${!k:-}" ] && ENV="$ENV,$k=${!k}"; done
 secret SLACK_WEBHOOK culprit-slack "${SLACK_WEBHOOK_URL:-}"
 
 # Signal source: read-only access only.
