@@ -62,29 +62,10 @@ Crash tools handle step 1. Culprit handles steps 2 to 4.
 
 ## How it works
 
-```
- ┌──────────────── App (iOS / Android) ────────────────┐
- │ Flags.variant("new_checkout")                        │
- │   ├─ killswitch_new_checkout on → control value      │
- │   └─ else → value from Remote Config / Statsig       │
- │ Flags.tag() → ff_new_checkout=on on every crash      │
- │               and session (Crashlytics or Sentry)    │
- └──────────────────────────┬──────────────────────────┘
-                            │ BigQuery export or Sentry API
-                            ▼
- ┌────────── Culprit job (Cloud Run, every 15 min) ─────────┐
- │ 1. Count the last 24h: affected users and active users   │
- │    per (flag, variant, app version, signal)              │
- │    signal = FATAL | ANR | NON_FATAL                      │
- │ 2. detect(): compare each variant with control           │
- │ 3. Skip anything already reported in the last 24h        │
- │ 4. Optionally turn on killswitch_<flag>                  │
- │    (Remote Config parameter or Statsig gate)             │
- │ 5. Find where the errors concentrate (OS, device)        │
- │ 6. Post to Slack                                         │
- │ 7. Write an audit row to BigQuery                        │
- └──────────────────────────────────────────────────────────┘
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
+  <img src="docs/architecture-light.svg" width="100%" alt="How Culprit works. In the app, Flags.variant serves the control value when the flag's kill switch is on, otherwise the Remote Config or Statsig value, and Flags.tag adds the flag and variant to every crash and session. Crash data reaches Culprit through the Crashlytics BigQuery export or the Sentry API. Every 15 minutes the Culprit job: 1 counts affected and active users per flag, variant, version and signal; 2 detects variants at least 2x worse than control with a significant z-test; 3 skips anything reported in the last 24 hours; 4 turns on the kill switch if auto-kill is allowed; 5 breaks errors down by OS and device; 6 posts a Slack alert; 7 writes an audit row to BigQuery. On the next flag fetch, users get control.">
+</picture>
 
 **Why a separate kill switch?** Editing an experiment's targeting automatically is risky, and Firebase A/B Testing has no public API for stopping an experiment. A separate boolean, `killswitch_<flag>`, that the app checks first works with any flag tool, can only ever send users to the control (known-good) path, and is easy to undo.
 
@@ -110,7 +91,8 @@ client/
   android/Flags.kt         Same wrapper for Android
   android/FlagsTest.kt     JUnit: kill switch serves control
 grafana/
-  culprit.json           Importable Grafana dashboard (BigQuery plugin)
+  culprit.json             Importable Grafana dashboard (BigQuery plugin)
+docs/                      Website (GitHub Pages); architecture.py redraws the diagram above
 sandbox/
   server.py                Local stand-in for flag tool, crash data, Slack and audit table
   simulate.py              Fake app traffic with a chosen bug

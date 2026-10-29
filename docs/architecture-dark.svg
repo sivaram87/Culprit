@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 692" width="980" height="692" role="img" aria-labelledby="t d">
+<title id="t">How Culprit works</title>
+<desc id="d">The app reads flags through Flags.variant, which serves the control value when killswitch_flag is on, and tags every crash and session with the variant. Crash data reaches Culprit through the Crashlytics BigQuery export or the Sentry API. Every 15 minutes the Culprit job counts users per variant, detects regressions against control, skips repeats, optionally turns on the kill switch, breaks errors down by OS and device, alerts Slack and writes an audit row. On the next flag fetch, users get the control value.</desc>
+<defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker><marker id="ha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ff7b72"/></marker></defs>
+<rect x="40" y="364" width="900" height="308" rx="14" fill="#161b22" stroke="#30363d"/>
+<rect x="40" y="24" width="900" height="212" rx="14" fill="#161b22" stroke="#30363d"/>
+<text x="60" y="54" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#e6edf3" text-anchor="start">App</text>
+<text x="98" y="54" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198a1" text-anchor="start">iOS / Android · Flags.swift / Flags.kt</text>
+<rect x="60" y="94" width="200" height="84" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1"/>
+<text x="76" y="123" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">Flags.variant(…)</text>
+<text x="76" y="146" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">the only way code</text>
+<text x="76" y="164" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">reads a watched flag</text>
+<polygon points="292,136 308,108.0 408,108.0 424,136 408,164.0 308,164.0" fill="#0d1117" stroke="#3d444d"/>
+<text x="358.0" y="133" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600" fill="#e6edf3" text-anchor="middle">killswitch_</text>
+<text x="358.0" y="150" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600" fill="#e6edf3" text-anchor="middle">&lt;flag&gt; on?</text>
+<path d="M260,136 L288,136" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<rect x="480" y="74" width="196" height="44" rx="10" fill="#3a1d1b" stroke="#ff7b72" stroke-width="2"/>
+<text x="496" y="101" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#ff7b72" text-anchor="start">control value</text>
+<text x="662" y="101" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">known good</text>
+<rect x="480" y="154" width="196" height="44" rx="10" fill="#0d1117" stroke="#3d444d"/>
+<text x="496" y="181" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6edf3" text-anchor="start">Remote Config / Statsig</text>
+<path d="M416,122 C448,96 450,96 476,96" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<path d="M416,150 C448,176 450,176 476,176" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<text x="438" y="90" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#ff7b72" text-anchor="start">yes</text>
+<text x="438" y="192" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#9198a1" text-anchor="start">no</text>
+<rect x="728" y="94" width="192" height="84" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1"/>
+<text x="744" y="123" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">Flags.tag()</text>
+<text x="744" y="146" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">ff_new_checkout=on on</text>
+<text x="744" y="164" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">every crash and session</text>
+<path d="M676,96 C708,96 698,126 724,128" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<path d="M676,176 C708,176 698,146 724,144" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<path d="M490.0,236 L490.0,276" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<text x="502.0" y="262" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">crashes · ANRs · errors · sessions, tagged by variant</text>
+<rect x="280.0" y="280" width="420" height="44" rx="22" fill="#1c2330" stroke="#3d444d"/>
+<text x="490.0" y="307" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#e6edf3" text-anchor="middle">Crashlytics → BigQuery export   or   Sentry API</text>
+<path d="M490.0,324 L490.0,360" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<text x="60" y="394" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#e6edf3" text-anchor="start">Culprit job</text>
+<text x="160" y="394" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198a1" text-anchor="start">Cloud Run · every 15 minutes · last 24 hours</text>
+<rect x="60.0" y="416" width="268.0" height="96" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1"/>
+<circle cx="84.0" cy="440" r="11" fill="#e6edf3"/>
+<text x="84.0" y="444.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0d1117" text-anchor="middle">1</text>
+<text x="104.0" y="445" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">Count</text>
+<text x="76.0" y="468" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">affected and active users per flag,</text>
+<text x="76.0" y="486" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">variant, version and signal</text>
+<rect x="356.0" y="416" width="268.0" height="96" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1"/>
+<circle cx="380.0" cy="440" r="11" fill="#e6edf3"/>
+<text x="380.0" y="444.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0d1117" text-anchor="middle">2</text>
+<text x="400.0" y="445" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">Detect</text>
+<text x="372.0" y="468" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">each variant vs control:</text>
+<text x="372.0" y="486" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">≥ 2× the rate, significant z-test</text>
+<path d="M330.0,464.0 L352.0,464.0" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<rect x="652.0" y="416" width="268.0" height="96" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1"/>
+<circle cx="676.0" cy="440" r="11" fill="#e6edf3"/>
+<text x="676.0" y="444.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0d1117" text-anchor="middle">3</text>
+<text x="696.0" y="445" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">De-duplicate</text>
+<text x="668.0" y="468" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">skip anything already</text>
+<text x="668.0" y="486" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">reported in the last 24h</text>
+<path d="M626.0,464.0 L648.0,464.0" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<rect x="60.0" y="552" width="200.0" height="96" rx="10" fill="#3a1d1b" stroke="#ff7b72" stroke-width="2"/>
+<circle cx="84.0" cy="576" r="11" fill="#ff7b72"/>
+<text x="84.0" y="580.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0d1117" text-anchor="middle">4</text>
+<text x="104.0" y="581" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#ff7b72" text-anchor="start">Kill switch</text>
+<text x="76.0" y="604" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">turn on killswitch_&lt;flag&gt;</text>
+<text x="76.0" y="622" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">if auto-kill is allowed</text>
+<rect x="280.0" y="552" width="200.0" height="96" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1"/>
+<circle cx="304.0" cy="576" r="11" fill="#e6edf3"/>
+<text x="304.0" y="580.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0d1117" text-anchor="middle">5</text>
+<text x="324.0" y="581" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">Breakdown</text>
+<text x="296.0" y="604" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">where errors pile up:</text>
+<text x="296.0" y="622" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">OS and device</text>
+<path d="M262.0,600.0 L276.0,600.0" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<rect x="500.0" y="552" width="200.0" height="96" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1"/>
+<circle cx="524.0" cy="576" r="11" fill="#e6edf3"/>
+<text x="524.0" y="580.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0d1117" text-anchor="middle">6</text>
+<text x="544.0" y="581" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">Slack alert</text>
+<text x="516.0" y="604" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">numbers, action taken</text>
+<text x="516.0" y="622" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">and how to undo</text>
+<path d="M482.0,600.0 L496.0,600.0" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<rect x="720.0" y="552" width="200.0" height="96" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1"/>
+<circle cx="744.0" cy="576" r="11" fill="#e6edf3"/>
+<text x="744.0" y="580.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0d1117" text-anchor="middle">7</text>
+<text x="764.0" y="581" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="start">Audit row</text>
+<text x="736.0" y="604" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">BigQuery, behind the</text>
+<text x="736.0" y="622" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#9198a1" text-anchor="start">Looker / Grafana dashboards</text>
+<path d="M702.0,600.0 L716.0,600.0" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<path d="M786.0,512 L786.0,532 L160.0,532 L160.0,548" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#h)"/>
+<path d="M60,600.0 L18,600.0 L18,218 L358.0,218 L358.0,168.0" fill="none" stroke="#ff7b72" stroke-width="1.8" stroke-dasharray="6 5" marker-end="url(#ha)"/>
+<text x="370.0" y="230" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#ff7b72" text-anchor="start">next flag fetch: users get control</text>
+</svg>
