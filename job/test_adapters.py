@@ -188,6 +188,29 @@ def test_breakdown_reaches_slack_and_audit():
     assert json.loads(rows[0]["segments"])[0]["segment"] == "Android 14"
 
 
+def test_grafana_dashboard_matches_views():
+    import json
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    dash = json.loads((root / "grafana" / "flagguard.json").read_text())
+    views = set(re.findall(r"VIEW `\{project\}\.flagguard\.(\w+)`", (root / "job" / "dashboard.sql").read_text()))
+    assert views == {"findings", "daily", "flags_30d"}, views
+
+    assert {i["name"] for i in dash["__inputs"]} == {"DS_BIGQUERY", "VAR_PROJECT"}
+    targets = [t for p in dash["panels"] for t in p["targets"]]
+    assert len(targets) == len(dash["panels"]) == 7
+    for t in targets:
+        sql = t["rawSql"]
+        assert t["datasource"]["uid"] == "${DS_BIGQUERY}"
+        used = re.findall(r"`([^`]+)`", sql)
+        assert used and all(re.fullmatch(r"\$\{project\}\.flagguard\.(\w+)", u) for u in used), sql
+        assert {u.rsplit(".", 1)[1] for u in used} <= views, sql
+        if "flagguard.findings" in sql:
+            assert "$__timeFilter(ts)" in sql, sql
+
+
 if __name__ == "__main__":
     sys.dont_write_bytecode = True
     for name, fn in list(globals().items()):

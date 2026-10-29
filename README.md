@@ -13,7 +13,7 @@ Undo: turn `killswitch_new_checkout` off in Statsig.
 Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% control).
 ```
 
-Every finding is also logged to BigQuery, and a [Looker Studio dashboard](#dashboard) shows them over time.
+Every finding is also logged to BigQuery, and a [Looker Studio or Grafana dashboard](#dashboard) shows them over time.
 
 ---
 
@@ -104,12 +104,14 @@ client/
   ios/FlagsTests.swift     XCTest: kill switch serves control
   android/Flags.kt         Same wrapper for Android
   android/FlagsTest.kt     JUnit: kill switch serves control
+grafana/
+  flagguard.json           Importable Grafana dashboard (BigQuery plugin)
 job/
   detect.py                Detection, kill policy and safety checks, no side effects
   main.py                  Crashlytics/BigQuery counts, Remote Config kill, Slack, audit, CLI
   source_sentry.py         Sentry counts
   kill_statsig.py          Statsig kill
-  dashboard.sql            BigQuery views for the Looker Studio dashboard
+  dashboard.sql            BigQuery views behind the dashboards
   flags.json               Watched flags: control variant + auto_kill opt-in
   test_detect.py           Detector tests (plain asserts, no framework)
   test_adapters.py         Sentry, Statsig and dispatch tests (no network)
@@ -417,7 +419,7 @@ Find the cause before you undo. The detector will flag the variant again once it
 
 ## Dashboard
 
-A Looker Studio report on top of the audit table. There's nothing to host: Looker Studio reads BigQuery directly.
+Flag Guard's history (every finding and kill) can be shown in **Looker Studio** or **Grafana**. Both read the same BigQuery views directly, so there's nothing extra to host.
 
 **Views** (created by `deploy.sh` from `job/dashboard.sql`):
 
@@ -427,7 +429,10 @@ A Looker Studio report on top of the audit table. There's nothing to host: Looke
 | `flagguard.daily` | day × signal × action | Trends: findings and kills over time |
 | `flagguard.flags_30d` | flag | Which flags misbehave most: alerts, kills, last alert, last action |
 
-**Create the report:**
+The audit table doesn't record when someone undoes a kill, so "last action" shows what Flag Guard did, not the switch's current state.
+
+### Looker Studio
+
 1. Open the link `deploy.sh` prints at the end. It creates a report named "Flag Guard" with all three views connected.
 2. For each data source, choose **Viewer's credentials** (Resource → Manage added data sources → Edit). Each viewer then needs their own BigQuery access, so the dashboard never shows data to someone who couldn't query it.
 3. Add four charts:
@@ -435,10 +440,76 @@ A Looker Studio report on top of the audit table. There's nothing to host: Looke
    - **Kills over time:** line from `daily`, filtered to `action = killed`
    - **Recent findings:** table from `findings`, sorted by `ts` descending, showing flag, variant, version, signal, crash_rate, control_rate, rate_ratio, top_segment and action
    - **Flags, last 30 days:** table from `flags_30d`, sorted by `alerts`
+4. **Give your team access:** grant `roles/bigquery.dataViewer` on the `flagguard` dataset and `roles/bigquery.jobUser` on the project, then share the report.
 
-**Give your team access:** grant `roles/bigquery.dataViewer` on the `flagguard` dataset and `roles/bigquery.jobUser` on the project, then share the report.
+### Grafana
 
-The audit table doesn't record when someone undoes a kill, so "last action" shows what Flag Guard did, not the switch's current state.
+`grafana/flagguard.json` is a ready-made dashboard: three totals (findings, kills, flags affected), findings per day stacked by signal, kills per day, a table of recent findings with kills highlighted, and a 30-day per-flag table. All panels except the 30-day table follow Grafana's time picker. It needs **Grafana 11.6 or newer** and the official BigQuery plugin.
+
+**1. Install the plugin**
+
+```bash
+grafana cli plugins install grafana-bigquery-datasource
+```
+
+Or install "Google BigQuery" from **Administration → Plugins**. On Grafana Cloud it's already available.
+
+**2. Give Grafana read-only access.** Grafana only needs to read the `flagguard` dataset. Pick the first option that fits where Grafana runs:
+
+| Grafana runs on | Auth method in the data source | What to grant |
+|---|---|---|
+| A Google Compute Engine VM | GCE Default Service Account | The two roles below, to the VM's service account. No key file. |
+| Grafana Cloud | Workload Identity Federation or Forward OAuth Identity | The two roles below, to each user (or their group). Queries run as the signed-in user. |
+| Anywhere else | Google JWT File | The two roles below, to a dedicated service account with a key |
+
+The two roles: `roles/bigquery.dataViewer` on the `flagguard` dataset, and `roles/bigquery.jobUser` on the project. For a dedicated service account:
+
+```bash
+gcloud iam service-accounts create flagguard-grafana --project my-proj
+bq add-iam-policy-binding --member serviceAccount:flagguard-grafana@my-proj.iam.gserviceaccount.com \
+  --role roles/bigquery.dataViewer my-proj:flagguard
+gcloud projects add-iam-policy-binding my-proj --condition None \
+  --member serviceAccount:flagguard-grafana@my-proj.iam.gserviceaccount.com --role roles/bigquery.jobUser
+```
+
+Only if you need the JWT option, create a key and keep it out of this repo. Grafana stores it encrypted.
+
+```bash
+gcloud iam service-accounts keys create flagguard-grafana-key.json \
+  --iam-account flagguard-grafana@my-proj.iam.gserviceaccount.com
+```
+
+The account can read only aggregate counts in one dataset. It can't touch kill switches, crash data or the job.
+
+**3. Add the data source.** In **Connections → Data sources → Add → Google BigQuery**, pick the auth method and set **Default project** to your project. Because access is granted on the dataset only, the plugin's dataset drop-down may look empty. The dashboard's queries use full table names, so that's fine. To provision it as code instead:
+
+```yaml
+apiVersion: 1
+datasources:
+  - name: BigQuery (Flag Guard)
+    type: grafana-bigquery-datasource
+    jsonData:
+      authenticationType: jwt          # or gce
+      clientEmail: flagguard-grafana@my-proj.iam.gserviceaccount.com
+      defaultProject: my-proj
+      tokenUri: https://oauth2.googleapis.com/token
+      privateKeyPath: /etc/grafana/secrets/flagguard-grafana-key.json
+```
+
+**4. Import the dashboard.** In **Dashboards → New → Import**, upload `grafana/flagguard.json`. Then pick the BigQuery data source and enter your GCP project id when asked. Or import it through the API:
+
+```bash
+jq -n --slurpfile d grafana/flagguard.json --arg ds "$DATASOURCE_UID" --arg project my-proj '{
+  dashboard: $d[0], overwrite: true,
+  inputs: [
+    {name: "DS_BIGQUERY", type: "datasource", pluginId: "grafana-bigquery-datasource", value: $ds},
+    {name: "VAR_PROJECT", type: "constant", value: $project}
+  ]}' |
+curl -sS -X POST "$GRAFANA_URL/api/dashboards/import" \
+  -H "Authorization: Bearer $GRAFANA_TOKEN" -H "Content-Type: application/json" --data @-
+```
+
+The dashboard file holds no project id or credentials, so it's safe to commit as is. If you change the views in `job/dashboard.sql`, run `python3 job/test_adapters.py`: it fails if the dashboard reads a view that no longer exists.
 
 ## Testing
 
@@ -472,6 +543,7 @@ cd job && python3 test_detect.py && python3 test_adapters.py
 - all four combinations of crash source and flag tool reach the right code, and unknown values are refused
 - the Sentry breakdown queries the finding's release and signal, grouped by `os` and then `device`
 - the breakdown line reaches Slack and the audit row, and a failed breakdown still sends the alert
+- the Grafana dashboard only reads views that `dashboard.sql` creates, uses the import-time data source and project, and applies the time picker to findings queries
 
 **App wrappers:** `FlagsTests.swift` / `FlagsTest.kt` check that the kill switch serves control. Add them to your app's test target. Set the `@testable import` module name to match your app.
 
@@ -493,6 +565,7 @@ cd job && python3 test_detect.py && python3 test_adapters.py
 | Sentry token misuse | The token needs only `org:read` and `event:read`. It can read error data but change nothing. |
 | PII | Tags contain only flag name and variant. Slack messages, audit rows and dashboard views contain only aggregate counts and OS/device names, never user IDs. |
 | Dashboard over-sharing | Looker Studio data sources use viewer's credentials, so viewers need their own BigQuery read access on the `flagguard` dataset. Sharing the report doesn't share the data. |
+| Grafana's BigQuery access | Read-only: `bigquery.dataViewer` on the `flagguard` dataset plus `bigquery.jobUser`. Auth methods without keys (GCE, workload identity, forwarded OAuth) are preferred. A key, if needed, lives only in Grafana's encrypted storage. The dashboard JSON contains no project id or credentials. |
 | Over-broad access | Always: `bigquery.jobUser`, `bigquery.dataEditor` on the audit table only, `secretAccessor` on its own secrets, and `run.invoker` on this job only. Crashlytics adds `bigquery.dataViewer` on the two export datasets. Remote Config adds `firebaseremoteconfig.admin`. |
 | Supply chain | Three pinned dependencies: `google-cloud-bigquery`, `google-auth`, `requests`. |
 
