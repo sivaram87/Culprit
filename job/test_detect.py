@@ -1,5 +1,7 @@
 """Run: python test_detect.py"""
-from detect import Finding, action_for, check_only_kill, detect, is_killed, kill_template
+from detect import (
+    Finding, action_for, check_only_kill, concentration, describe, detect, is_killed, kill_template, os_major,
+)
 
 FLAGS = {"checkout": {"control": "off"}}
 
@@ -87,6 +89,50 @@ def test_kill_policy():
     assert action_for(finding("FATAL"), opted_in, True, 1) == "kill_capped"
     assert action_for(finding("FATAL"), opted_in, False, 0) == "alerted"  # AUTO_KILL off
     assert action_for(finding("FATAL"), FLAGS, True, 0) == "alerted"  # flag not opted in
+
+
+def test_os_major():
+    assert os_major("Android 14.0.1") == "Android 14"
+    assert os_major("iOS 17.2") == "iOS 17"
+    assert os_major("iPadOS 18") == "iPadOS 18"
+    assert os_major("") == "unknown" and os_major(None) == "unknown"
+    assert os_major("Linux") == "Linux"
+
+
+def seg(variant, dim, segment, n):
+    return dict(variant=variant, dim=dim, segment=segment, crashed_users=n)
+
+
+def test_concentration_finds_the_hot_segment():
+    rows = [
+        seg("on", "os", "Android 14.0", 50), seg("on", "os", "Android 14.1", 12), seg("on", "os", "Android 13", 38),
+        seg("off", "os", "Android 14.0", 20), seg("off", "os", "Android 13", 80),
+        seg("on", "device", "Samsung SM-S918B", 30), seg("on", "device", "Pixel 8", 70),
+        seg("off", "device", "Samsung SM-S918B", 30), seg("off", "device", "Pixel 8", 70),
+    ]
+    [top] = concentration(rows, "on", "off")
+    # Patch versions merged: 62 of 100 variant users on Android 14 vs 20 of 100 in control.
+    assert top == dict(dim="os", segment="Android 14", variant_share=0.62, control_share=0.2)
+
+
+def test_concentration_equal_mix_is_empty():
+    rows = [seg("on", "os", "iOS 17", 50), seg("on", "os", "iOS 18", 50),
+            seg("off", "os", "iOS 17", 5), seg("off", "os", "iOS 18", 5)]
+    assert concentration(rows, "on", "off") == []
+
+
+def test_concentration_with_zero_error_control():
+    rows = [seg("on", "device", "Pixel 6", 40), seg("on", "device", "Pixel 8", 10)]
+    segs = concentration(rows, "on", "off")  # no control errors: biggest variant shares come first
+    assert [s["segment"] for s in segs] == ["Pixel 6", "Pixel 8"]
+    assert all(s["control_share"] == 0.0 for s in segs)
+
+
+def test_describe():
+    assert describe(None) == "Breakdown unavailable."
+    assert describe([]) == "No OS or device stands out."
+    line = describe([dict(dim="os", segment="Android 14", variant_share=0.62, control_share=0.2)])
+    assert line == "Concentrated in: Android 14 (62% vs 20% control)."
 
 
 TEMPLATE = {

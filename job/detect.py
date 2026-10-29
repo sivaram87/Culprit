@@ -118,3 +118,43 @@ def check_only_kill(old, new, flag):
         or rest(old) != rest(new)
     ):
         raise ValueError(f"refusing Remote Config change beyond {key}=true")
+
+
+def os_major(s):
+    """'Android 14.0.1' -> 'Android 14', so patch versions don't split the counts."""
+    m = re.match(r"\s*([A-Za-z][A-Za-z ]*?)\s*(\d+)", s or "")
+    return f"{m[1]} {m[2]}" if m else (s or "").strip() or "unknown"
+
+
+def concentration(rows, variant, control, top=3, min_excess=0.1):
+    """Where the variant's errors pile up compared with control's.
+    rows: dicts with variant, dim ("os"/"device"), segment, crashed_users.
+    Compares each segment's share of affected users (variant vs control) within its dim;
+    returns the top segments by excess share, ignoring gaps under min_excess."""
+    counts, totals = {}, {}
+    for r in rows:
+        seg = os_major(r["segment"]) if r["dim"] == "os" else (r["segment"] or "").strip() or "unknown"
+        by_variant = counts.setdefault((r["dim"], seg), {})
+        by_variant[r["variant"]] = by_variant.get(r["variant"], 0) + r["crashed_users"]
+        totals[(r["dim"], r["variant"])] = totals.get((r["dim"], r["variant"]), 0) + r["crashed_users"]
+
+    out = []
+    for (dim, seg), by_variant in counts.items():
+        v_total, c_total = totals.get((dim, variant), 0), totals.get((dim, control), 0)
+        if not v_total:
+            continue
+        v_share = by_variant.get(variant, 0) / v_total
+        c_share = by_variant.get(control, 0) / c_total if c_total else 0.0
+        if v_share - c_share >= min_excess:
+            out.append(dict(dim=dim, segment=seg, variant_share=round(v_share, 3), control_share=round(c_share, 3)))
+    return sorted(out, key=lambda s: s["variant_share"] - s["control_share"], reverse=True)[:top]
+
+
+def describe(segments):
+    """Slack line for concentration() output; None means the breakdown failed."""
+    if segments is None:
+        return "Breakdown unavailable."
+    if not segments:
+        return "No OS or device stands out."
+    parts = [f"{s['segment']} ({s['variant_share']:.0%} vs {s['control_share']:.0%} control)" for s in segments]
+    return "Concentrated in: " + " · ".join(parts) + "."

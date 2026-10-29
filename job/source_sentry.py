@@ -23,13 +23,13 @@ USERS_QUERY = "span.op:[app.start.cold,app.start.warm]"
 COUNT = "count_unique(user)"  # mobile SDKs default user.id to an install id
 
 
-def fetch(dataset, query, tag, start, end):
+def fetch(dataset, query, tag, start, end, group="release"):
     """Every row of one events query, following Sentry's Link-header pagination."""
     url = f"{os.environ.get('SENTRY_URL', 'https://sentry.io')}/api/0/organizations/{os.environ['SENTRY_ORG']}/events/"
     params = {
         "dataset": dataset,
         "query": f"has:{tag} {query}",
-        "field": [tag, "release", COUNT],
+        "field": [tag, group, COUNT],
         "project": os.environ["SENTRY_PROJECT_ID"],
         "start": start.isoformat(),
         "end": end.isoformat(),
@@ -65,8 +65,23 @@ def merge(users, crashes):
 def counts(flags, start, end):
     users, crashes = {}, {s: {} for s in SIGNAL_QUERIES}
     for flag in flags:
+        detect.kill_id(flag)  # same name rule as kills: nothing odd reaches a query
         tag = "ff_" + flag
         users.update(parse(fetch("spans", USERS_QUERY, tag, start, end), flag))
         for signal, query in SIGNAL_QUERIES.items():
             crashes[signal].update(parse(fetch("errors", query, tag, start, end), flag))
     return merge(users, crashes)
+
+
+def segments(f, control, start, end):
+    """Affected users for one finding, split by OS and by device (Sentry's `os` and `device` tags)."""
+    detect.kill_id(f.flag)
+    tag = "ff_" + f.flag
+    release = f.version.replace('"', "")
+    query = f'{SIGNAL_QUERIES[f.signal]} release:"{release}"'
+    rows = []
+    for dim in ("os", "device"):
+        for r in fetch("errors", query, tag, start, end, group=dim):
+            if r.get(tag) in (f.variant, control):
+                rows.append(dict(variant=r[tag], dim=dim, segment=r.get(dim) or "", crashed_users=int(r[COUNT])))
+    return rows

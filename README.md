@@ -10,7 +10,10 @@ Works with **Crashlytics or Sentry** for crash data, and **Firebase Remote Confi
 :rotating_light: new_checkout=on on v5.2: crash rate 1.20% vs control 0.20%
 (120/10000 users, p=1.1e-17). Action: killed.
 Undo: turn `killswitch_new_checkout` off in Statsig.
+Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% control).
 ```
+
+Every finding is also logged to BigQuery, and a [Looker Studio dashboard](#dashboard) shows them over time.
 
 ---
 
@@ -33,6 +36,7 @@ Undo: turn `killswitch_new_checkout` off in Statsig.
 - [Detection rules](#detection-rules)
 - [Slack actions](#slack-actions)
 - [Undoing a kill](#undoing-a-kill)
+- [Dashboard](#dashboard)
 - [Testing](#testing)
 - [Security](#security)
 - [Limitations](#limitations)
@@ -71,8 +75,9 @@ Crash tools handle step 1. Flag Guard handles steps 2 to 4.
  │ 3. Skip anything already reported in the last 24h        │
  │ 4. Optionally turn on killswitch_<flag>                  │
  │    (Remote Config parameter or Statsig gate)             │
- │ 5. Post to Slack                                         │
- │ 6. Write an audit row to BigQuery                        │
+ │ 5. Find where the errors concentrate (OS, device)        │
+ │ 6. Post to Slack                                         │
+ │ 7. Write an audit row to BigQuery                        │
  └──────────────────────────────────────────────────────────┘
 ```
 
@@ -104,6 +109,7 @@ job/
   main.py                  Crashlytics/BigQuery counts, Remote Config kill, Slack, audit, CLI
   source_sentry.py         Sentry counts
   kill_statsig.py          Statsig kill
+  dashboard.sql            BigQuery views for the Looker Studio dashboard
   flags.json               Watched flags: control variant + auto_kill opt-in
   test_detect.py           Detector tests (plain asserts, no framework)
   test_adapters.py         Sentry, Statsig and dispatch tests (no network)
@@ -292,10 +298,11 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \
 
 Secrets (`SLACK_WEBHOOK_URL`, `SENTRY_AUTH_TOKEN`, `STATSIG_CONSOLE_KEY`) are only needed on the first deploy or to rotate them. They go straight into Secret Manager.
 
-`deploy.sh` is safe to re-run. Re-running it is also how you upgrade: it adds the `signal` column to an audit table created by an older version. It sets up:
+`deploy.sh` is safe to re-run. Re-running it is also how you upgrade: it adds the `signal` and `segments` columns to an audit table created by an older version. It sets up:
 
 - the service account `flagguard@<project>.iam.gserviceaccount.com`
 - the dataset and table `flagguard.actions`, which is the audit log
+- the dashboard views `flagguard.findings`, `flagguard.daily` and `flagguard.flags_30d`, plus a printed link that creates the [dashboard](#dashboard)
 - IAM roles for the chosen tools only (see [Security](#security))
 - secrets `flagguard-slack`, plus `flagguard-sentry` and/or `flagguard-statsig` when used
 - the Cloud Run job `flagguard`, built from `Dockerfile`, in **alert-only** mode
@@ -380,6 +387,16 @@ Details:
 - The control variant is never flagged.
 - A (flag, variant, version, signal) already reported in the last 24h isn't reported again.
 
+### Where it happens: OS and device breakdown
+
+Each new alert also says where the variant's errors concentrate. Detection itself doesn't change, so this adds no false alarms.
+
+- For the finding's flag, version and signal, the job counts affected users by **OS major version** (`Android 14.0.1` and `14.1` both count as `Android 14`) and by **device model**, for the variant and for control.
+- It compares **shares**. "Android 14 is 62% of the variant's affected users but 20% of control's" means the problem is concentrated there. Shares need no active-user counts, so this works the same for Crashlytics and Sentry.
+- The top 3 segments whose share is at least 10 points higher than control's are shown. If control has no errors at all (common for ANRs), the variant's biggest segments are shown.
+- The breakdown runs after any kill, so it never delays one. If its query fails, the alert still goes out with "Breakdown unavailable."
+- The result is stored as JSON in the audit table's `segments` column.
+
 ## Slack actions
 
 Every alert carries one action:
@@ -397,6 +414,31 @@ Every alert carries one action:
 - **Statsig:** disable the gate `killswitch_<flag>` again. Statsig's audit log shows when the job enabled it.
 
 Find the cause before you undo. The detector will flag the variant again once its rate climbs back.
+
+## Dashboard
+
+A Looker Studio report on top of the audit table. There's nothing to host: Looker Studio reads BigQuery directly.
+
+**Views** (created by `deploy.sh` from `job/dashboard.sql`):
+
+| View | One row per | Use it for |
+|---|---|---|
+| `flagguard.findings` | finding | The full list, with `rate_ratio` (variant ÷ control) and `top_segment` |
+| `flagguard.daily` | day × signal × action | Trends: findings and kills over time |
+| `flagguard.flags_30d` | flag | Which flags misbehave most: alerts, kills, last alert, last action |
+
+**Create the report:**
+1. Open the link `deploy.sh` prints at the end. It creates a report named "Flag Guard" with all three views connected.
+2. For each data source, choose **Viewer's credentials** (Resource → Manage added data sources → Edit). Each viewer then needs their own BigQuery access, so the dashboard never shows data to someone who couldn't query it.
+3. Add four charts:
+   - **Findings per day:** stacked bar from `daily`, dimension `day`, breakdown `signal`, metric `findings`
+   - **Kills over time:** line from `daily`, filtered to `action = killed`
+   - **Recent findings:** table from `findings`, sorted by `ts` descending, showing flag, variant, version, signal, crash_rate, control_rate, rate_ratio, top_segment and action
+   - **Flags, last 30 days:** table from `flags_30d`, sorted by `alerts`
+
+**Give your team access:** grant `roles/bigquery.dataViewer` on the `flagguard` dataset and `roles/bigquery.jobUser` on the project, then share the report.
+
+The audit table doesn't record when someone undoes a kill, so "last action" shows what Flag Guard did, not the switch's current state.
 
 ## Testing
 
@@ -416,6 +458,8 @@ cd job && python3 test_detect.py && python3 test_adapters.py
 - an ANR regression is flagged even when crashes are flat, including against a zero-ANR control
 - each signal produces its own finding
 - kill policy: non-fatals never kill, the daily cap applies, and both opt-ins are required
+- OS versions are reduced to their major version
+- the breakdown finds a concentrated OS, stays empty when the mix matches control, and handles a control with no errors
 - bad data (crashes greater than users) doesn't crash the detector
 - `kill_template` changes only `killswitch_<flag>`, and the safety check rejects any other edit
 
@@ -426,6 +470,8 @@ cd job && python3 test_detect.py && python3 test_adapters.py
 - flag names that could inject into a URL or key are rejected
 - the Statsig kill only ever writes `.../gates/killswitch_<flag>/enable`, and reports `already_killed`
 - all four combinations of crash source and flag tool reach the right code, and unknown values are refused
+- the Sentry breakdown queries the finding's release and signal, grouped by `os` and then `device`
+- the breakdown line reaches Slack and the audit row, and a failed breakdown still sends the alert
 
 **App wrappers:** `FlagsTests.swift` / `FlagsTest.kt` check that the kill switch serves control. Add them to your app's test target. Set the `@testable import` module name to match your app.
 
@@ -445,7 +491,8 @@ cd job && python3 test_detect.py && python3 test_adapters.py
 | A bad detection kills a winning experiment | Alert-only is the default. Auto-kill is opt-in per flag through a reviewed PR, and must also be enabled globally with `AUTO_KILL=1`. |
 | Secrets leak | The Slack webhook, Sentry token and Statsig key live only in Secret Manager, and each is mounted only when its tool is chosen. There are no service-account key files, because Cloud Run attaches the account. |
 | Sentry token misuse | The token needs only `org:read` and `event:read`. It can read error data but change nothing. |
-| PII | Tags contain only flag name and variant. Slack messages and audit rows contain only aggregate counts. |
+| PII | Tags contain only flag name and variant. Slack messages, audit rows and dashboard views contain only aggregate counts and OS/device names, never user IDs. |
+| Dashboard over-sharing | Looker Studio data sources use viewer's credentials, so viewers need their own BigQuery read access on the `flagguard` dataset. Sharing the report doesn't share the data. |
 | Over-broad access | Always: `bigquery.jobUser`, `bigquery.dataEditor` on the audit table only, `secretAccessor` on its own secrets, and `run.invoker` on this job only. Crashlytics adds `bigquery.dataViewer` on the two export datasets. Remote Config adds `firebaseremoteconfig.admin`. |
 | Supply chain | Three pinned dependencies: `google-cloud-bigquery`, `google-auth`, `requests`. |
 
@@ -459,6 +506,8 @@ cd job && python3 test_detect.py && python3 test_adapters.py
 - **Remote Config kill-switch parameters must not be inside a parameter group.** If one is, the API rejects the update and nothing changes; the job fails loudly.
 - **The flag list is kept in two places** (`Flags.watched` and `flags.json`) and must match.
 - **Fixed thresholds plus a z-test.** Simple and predictable, but slower to react than sequential testing on low-traffic flags.
+- **The breakdown compares shares, not rates.** It shows where the variant's errors concentrate relative to control, not the crash rate on each device, which would need active users per device.
+- **Sentry's `os` and `device` tags** are what the breakdown groups by. Check in staging that they hold what you expect for your SDK version.
 - **One app per job.** iOS and Android need separate deploys.
 - **Switching tools doesn't remove old access.** Redeploying with a different tool doesn't revoke the previous tool's IAM role or delete its secret. Remove those by hand.
 
@@ -468,5 +517,5 @@ These will be added when there's a need:
 
 - More tools: LaunchDarkly or Unleash for flags, Bugsnag or Embrace for crashes. Each is one `counts` or `kill` function plus a branch in `main.py`.
 - Sequential testing (mSPRT) for faster, safer detection
-- Breakdown by device and OS
-- A dashboard on top of the audit table
+- Detection per OS version, for regressions too small to move the overall rate
+- Recording undos and false alarms in the audit table, so the dashboard can show current state and precision

@@ -128,6 +128,66 @@ def test_dispatch_all_four_combinations():
     raise AssertionError("unknown FLAG_TOOL accepted")
 
 
+def test_sentry_segments_query():
+    seen = []
+
+    def get(url, params=None, **kw):
+        seen.append(params)
+        data = [
+            {"ff_checkout": "on", params["field"][1]: "Android 14.0", "count_unique(user)": 9},
+            {"ff_checkout": "other", params["field"][1]: "Android 13", "count_unique(user)": 99},  # not in finding
+        ]
+        r = FakeResponse({"data": data})
+        r.links = {}
+        return r
+
+    source_sentry.requests = types.SimpleNamespace(get=get)
+    f = detect.Finding("checkout", "on", "app@5.2", "ANR", 1000, 9, 0.009, 0.001, 1e-9)
+    from datetime import datetime
+    rows = source_sentry.segments(f, "off", datetime.now(), datetime.now())
+    assert [p["field"][1] for p in seen] == ["os", "device"]
+    assert 'release:"app@5.2"' in seen[0]["query"] and "ApplicationNotResponding" in seen[0]["query"]
+    assert {(r["dim"], r["variant"]) for r in rows} == {("os", "on"), ("device", "on")}
+
+
+def run_once(segments_rows):
+    """One main.run() with every service stubbed; returns (slack texts, audit rows)."""
+    os.environ.update(SIGNAL_SOURCE="crashlytics", FLAG_TOOL="firebase", AUTO_KILL="0",
+                      AUDIT_TABLE="p.flagguard.actions", SLACK_WEBHOOK="https://hooks.example")
+    slack_texts, audit_rows = [], []
+    main.counts = lambda bq, flags, end: [
+        dict(flag="checkout", variant="off", version="5.2", signal="FATAL", users=10_000, crashed_users=20),
+        dict(flag="checkout", variant="on", version="5.2", signal="FATAL", users=10_000, crashed_users=120),
+    ]
+    main.query = lambda bq, sql, **p: []  # no recent audit rows
+    main.segments_bigquery = segments_rows
+    main.requests.post = lambda url, json, **kw: slack_texts.append(json["text"]) or FakeResponse()
+    bq = types.SimpleNamespace(insert_rows_json=lambda table, rows: audit_rows.extend(rows) or [])
+    main.run(bq, {"checkout": {"control": "off"}}, main.dt.datetime.now(main.dt.timezone.utc))
+    return slack_texts, audit_rows
+
+
+def test_failed_breakdown_never_blocks_the_alert():
+    def boom(*a, **kw):
+        raise RuntimeError("bigquery down")
+
+    texts, rows = run_once(boom)
+    assert len(texts) == 1 and "Breakdown unavailable." in texts[0]
+    assert len(rows) == 1 and rows[0]["segments"] is None
+
+
+def test_breakdown_reaches_slack_and_audit():
+    texts, rows = run_once(lambda bq, f, control, end: [
+        dict(variant="on", dim="os", segment="Android 14", crashed_users=80),
+        dict(variant="on", dim="os", segment="Android 13", crashed_users=20),
+        dict(variant="off", dim="os", segment="Android 14", crashed_users=4),
+        dict(variant="off", dim="os", segment="Android 13", crashed_users=16),
+    ])
+    assert "Concentrated in: Android 14 (80% vs 20% control)." in texts[0]
+    import json
+    assert json.loads(rows[0]["segments"])[0]["segment"] == "Android 14"
+
+
 if __name__ == "__main__":
     sys.dont_write_bytecode = True
     for name, fn in list(globals().items()):

@@ -61,9 +61,27 @@ LEFT JOIN crashes USING (flag, variant, version, signal)
 """
 
 
+# Affected installs for one finding, split by OS and by device, for the variant and control.
+SEGMENTS_SQL = """
+WITH e AS (
+  SELECT k.value AS variant, installation_uuid,
+         CONCAT(IFNULL(operating_system.name, ''), ' ', IFNULL(operating_system.display_version, '')) AS os,
+         TRIM(CONCAT(IFNULL(device.manufacturer, ''), ' ', IFNULL(device.model, ''))) AS device
+  FROM `{crash_table}`, UNNEST(custom_keys) AS k
+  WHERE k.key = @tag AND k.value IN (@variant, @control)
+    AND application.display_version = @version AND error_type = @signal
+    AND event_timestamp BETWEEN @start AND @end
+)
+SELECT variant, 'os' AS dim, os AS segment, COUNT(DISTINCT installation_uuid) AS crashed_users FROM e GROUP BY 1, 3
+UNION ALL
+SELECT variant, 'device', device, COUNT(DISTINCT installation_uuid) FROM e GROUP BY 1, 3
+"""
+
+
 def query(bq, sql, **params):
+    kind = lambda v: "TIMESTAMP" if isinstance(v, dt.datetime) else "STRING"
     cfg = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter(k, "TIMESTAMP", v) for k, v in params.items()]
+        query_parameters=[bigquery.ScalarQueryParameter(k, kind(v), v) for k, v in params.items()]
     )
     return [dict(r) for r in bq.query(sql, job_config=cfg).result()]
 
@@ -84,6 +102,30 @@ def counts(bq, flags, end):
     if source == "sentry":
         return source_sentry.counts(flags, end - WINDOW, end)
     raise ValueError(f"unknown SIGNAL_SOURCE {source!r}")
+
+
+def segments_bigquery(bq, f, control, end):
+    sql = SEGMENTS_SQL.format(crash_table=os.environ["CRASHLYTICS_TABLE"])
+    return query(
+        bq, sql, tag="ff_" + f.flag, variant=f.variant, control=control,
+        version=f.version, signal=f.signal, start=end - WINDOW, end=end,
+    )
+
+
+def breakdown(bq, f, flags, end):
+    """Top OS/device segments for a finding, or None if the lookup fails.
+    Optional context: it must never block an alert or a kill."""
+    control = flags[f.flag]["control"]
+    try:
+        source = os.environ.get("SIGNAL_SOURCE", "crashlytics")
+        if source == "sentry":
+            rows = source_sentry.segments(f, control, end - WINDOW, end)
+        else:
+            rows = segments_bigquery(bq, f, control, end)
+        return detect.concentration(rows, f.variant, control)
+    except Exception as e:  # noqa: BLE001
+        print(f"breakdown failed for {f.flag}={f.variant}: {e!r}")
+        return None
 
 
 def kill(flag):
@@ -116,7 +158,7 @@ def kill_remote_config(flag):
     return "killed"
 
 
-def slack(f, action):
+def slack(f, action, segments):
     where = {"firebase": "Remote Config", "statsig": "Statsig"}.get(os.environ.get("FLAG_TOOL", "firebase"))
     switch = f"`killswitch_{f.flag}`"
     next_step = {
@@ -129,15 +171,17 @@ def slack(f, action):
     text = (
         f":rotating_light: *{f.flag}={f.variant}* on v{f.version}: {what} rate {f.crash_rate:.2%} "
         f"vs control {f.control_rate:.2%} ({f.crashed_users}/{f.users} users, p={f.p:.1e}). "
-        f"Action: *{action}*. {next_step}"
+        f"Action: *{action}*. {next_step}\n{detect.describe(segments)}"
     )
     requests.post(os.environ["SLACK_WEBHOOK"], json={"text": text}, timeout=10).raise_for_status()
 
 
-def audit(bq, f, action, now):
-    errors = bq.insert_rows_json(
-        os.environ["AUDIT_TABLE"], [{"ts": now.isoformat(), **dataclasses.asdict(f), "action": action}]
-    )
+def audit(bq, f, action, now, segments):
+    row = {
+        "ts": now.isoformat(), **dataclasses.asdict(f), "action": action,
+        "segments": None if segments is None else json.dumps(segments),
+    }
+    errors = bq.insert_rows_json(os.environ["AUDIT_TABLE"], [row])
     if errors:
         raise RuntimeError(errors)
 
@@ -161,8 +205,9 @@ def run(bq, flags, now):
         if action == "kill":
             action = kill(f.flag)
             kills += action == "killed"
-        slack(f, action)  # Slack before audit: a lost audit row means a repeat alert, not a missed one
-        audit(bq, f, action, now)
+        segments = breakdown(bq, f, flags, now)  # after the kill, so it never delays one
+        slack(f, action, segments)  # Slack before audit: a lost audit row means a repeat alert, not a missed one
+        audit(bq, f, action, now, segments)
 
 
 def main():
@@ -180,6 +225,7 @@ def main():
             end = now - i * WINDOW
             for f in detect.detect(counts(bq, flags, end), flags, **thresholds()):
                 print(end.date(), f)
+                print("   ", detect.describe(breakdown(bq, f, flags, end)))
         return
     run(bq, flags, now)
 

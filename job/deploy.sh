@@ -40,10 +40,12 @@ gcloud iam service-accounts create flagguard --project "$PROJECT" --display-name
 # Audit table (all combinations): run queries, write only this table.
 bq --project_id "$PROJECT" mk --dataset flagguard || true
 bq --project_id "$PROJECT" mk --table "$PROJECT:flagguard.actions" \
-  ts:TIMESTAMP,flag:STRING,variant:STRING,version:STRING,signal:STRING,users:INTEGER,crashed_users:INTEGER,crash_rate:FLOAT,control_rate:FLOAT,p:FLOAT,action:STRING || true
-# Upgrade path for audit tables created before ANR/non-fatal support.
+  ts:TIMESTAMP,flag:STRING,variant:STRING,version:STRING,signal:STRING,users:INTEGER,crashed_users:INTEGER,crash_rate:FLOAT,control_rate:FLOAT,p:FLOAT,action:STRING,segments:STRING || true
+# Upgrade path for audit tables created by older versions.
 bq --project_id "$PROJECT" query --use_legacy_sql=false \
-  "ALTER TABLE \`$AUDIT_TABLE\` ADD COLUMN IF NOT EXISTS signal STRING"
+  "ALTER TABLE \`$AUDIT_TABLE\` ADD COLUMN IF NOT EXISTS signal STRING, ADD COLUMN IF NOT EXISTS segments STRING"
+# Dashboard views (read by Looker Studio).
+sed "s/{project}/$PROJECT/g" dashboard.sql | bq --project_id "$PROJECT" query --use_legacy_sql=false
 bq add-iam-policy-binding --member "serviceAccount:$SA" --role roles/bigquery.dataEditor "$PROJECT:flagguard.actions"
 gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role roles/bigquery.jobUser --condition None
 
@@ -93,3 +95,14 @@ gcloud scheduler jobs create http flagguard-every-15m --project "$PROJECT" --loc
   --schedule "*/15 * * * *" --http-method POST \
   --uri "https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/flagguard:run" \
   --oauth-service-account-email "$SA" || echo "scheduler job already exists"
+
+# Looker Studio report with the three dashboard views connected. Opening it creates the report.
+LS="https://lookerstudio.google.com/reporting/create?r.reportName=Flag%20Guard"
+i=0
+for view in findings daily flags_30d; do
+  LS+="&ds.ds$i.connector=bigQuery&ds.ds$i.type=TABLE&ds.ds$i.projectId=$PROJECT&ds.ds$i.datasetId=flagguard&ds.ds$i.tableId=$view"
+  i=$((i + 1))
+done
+echo
+echo "Dashboard: open this link to create the Looker Studio report, then follow README 'Dashboard':"
+echo "$LS"
