@@ -1,3 +1,5 @@
+<img src="docs/icon.svg" width="80" alt="Culprit icon">
+
 # Culprit
 
 **Find the feature-flag variant behind a mobile crash, ANR or error spike, and switch it off automatically.**
