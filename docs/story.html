@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why We Built Culprit</title>
+<meta name="description" content="The story behind Culprit: why mobile teams need to know which feature flag broke their app, what the tool does well, where it falls short, and where it's going next.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%23d23b3b' stroke-width='3'/><path d='M19 19l8 8' stroke='%23d23b3b' stroke-width='3' stroke-linecap='round'/></svg>">
+<style>
+:root {
+  --bg: #fbfaf8; --surface: #ffffff; --surface-2: #f3f1ed; --text: #1c1b19; --muted: #615d56;
+  --border: #e4e0d8; --accent: #c93434; --accent-soft: #fbe9e7; --ok: #1e7d4f; --ok-soft: #e3f3ea;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131211; --surface: #1c1b19; --surface-2: #252320; --text: #efece6; --muted: #a59f95;
+    --border: #34312c; --accent: #ef6a5f; --accent-soft: #3a1f1c; --ok: #5cc48f; --ok-soft: #173326;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131211; --surface: #1c1b19; --surface-2: #252320; --text: #efece6; --muted: #a59f95;
+  --border: #34312c; --accent: #ef6a5f; --accent-soft: #3a1f1c; --ok: #5cc48f; --ok-soft: #173326;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 18px/1.75 Charter, "Iowan Old Style", Georgia, serif; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+header.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header.top .bar { max-width: 1080px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 18px; height: 56px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--text); text-decoration: none; font-size: 18px; }
+header nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+header nav a { color: var(--muted); text-decoration: none; }
+header nav a:hover { color: var(--text); }
+.theme-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 14px; font-family: inherit; }
+@media (max-width: 600px) { header nav { display: none; } .theme-btn { margin-left: auto; } }
+.progress { position: fixed; top: 56px; left: 0; height: 3px; background: var(--accent); width: 0; z-index: 11; }
+
+article { max-width: 700px; margin: 0 auto; padding: 56px 16px 40px; }
+.kicker { font: 600 13px/1 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(32px, 5.5vw, 48px)/1.12 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: -0.02em; margin: 14px 0 14px; }
+.dek { font-size: 21px; color: var(--muted); margin: 0 0 22px; line-height: 1.5; }
+.meta { font: 14px/1.4 system-ui, sans-serif; color: var(--muted); padding-bottom: 28px; border-bottom: 1px solid var(--border); margin-bottom: 36px; }
+h2 { font: 700 27px/1.25 system-ui, -apple-system, sans-serif; margin: 52px 0 12px; letter-spacing: -0.01em; scroll-margin-top: 72px; }
+h3 { font: 700 20px/1.3 system-ui, sans-serif; margin: 30px 0 8px; }
+p { margin: 0 0 20px; }
+code { font: 0.82em var(--mono); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+blockquote { margin: 28px 0; padding: 4px 0 4px 20px; border-left: 3px solid var(--accent); color: var(--text); font-size: 21px; font-style: italic; }
+.scene { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; margin: 26px 0; }
+.scene .label { font: 600 12px/1 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.scene p:last-child { margin-bottom: 0; }
+.slack { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 26px 0; font: 15px/1.55 system-ui, sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.slack b.who { display: block; margin-bottom: 4px; }
+.slack code { color: var(--accent); }
+ul, ol { padding-left: 24px; margin: 0 0 20px; }
+li { margin-bottom: 8px; }
+.toc { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-bottom: 8px; font: 15px/1.6 system-ui, sans-serif; }
+.toc strong { display: block; margin-bottom: 4px; }
+.toc ol { margin: 0; padding-left: 20px; }
+.toc li { margin: 0; }
+
+.ledger { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0 8px; font: 16px/1.55 system-ui, sans-serif; }
+@media (max-width: 640px) { .ledger { grid-template-columns: 1fr; } }
+.ledger section { border: 1px solid var(--border); border-radius: 12px; padding: 18px 18px 6px; background: var(--surface); }
+.ledger h3 { margin: 0 0 10px; font-size: 17px; }
+.ledger .pros h3 { color: var(--ok); }
+.ledger .cons h3 { color: var(--accent); }
+.ledger ul { padding-left: 18px; }
+.ledger li { margin-bottom: 10px; }
+.ledger li b { display: block; }
+.ledger li span { color: var(--muted); }
+
+.steps { counter-reset: s; list-style: none; padding: 0; }
+.steps li { counter-increment: s; position: relative; padding-left: 44px; margin-bottom: 16px; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 2px; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); font: 700 14px/24px system-ui, sans-serif; text-align: center; }
+
+.road { border-left: 2px solid var(--border); margin: 24px 0; padding-left: 22px; }
+.road .stage { position: relative; margin-bottom: 26px; }
+.road .stage::before { content: ""; position: absolute; left: -30px; top: 8px; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); border: 3px solid var(--accent); }
+.road .stage.later::before { border-color: var(--muted); }
+.road h3 { margin: 0 0 6px; }
+.road .when { font: 600 12px/1 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 6px; }
+.road ul { margin-bottom: 0; }
+
+.cta { margin: 44px 0 0; padding: 22px; border-radius: 12px; background: var(--accent-soft); font: 16px/1.6 system-ui, sans-serif; }
+.cta a.btn { display: inline-block; margin: 10px 10px 0 0; padding: 9px 16px; border-radius: 10px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; }
+.cta a.btn.alt { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+footer { max-width: 700px; margin: 0 auto; padding: 24px 16px 56px; color: var(--muted); font: 14px system-ui, sans-serif; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <a class="brand" href="./" aria-label="Culprit home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><circle cx="13" cy="13" r="8" fill="none" stroke="var(--accent)" stroke-width="3"/><path d="M19 19l8 8" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/></svg>
+      Culprit
+    </a>
+    <nav aria-label="Site"><a href="./">Home</a><a href="./#try">Try it</a><a href="./#setup">Setup</a><a href="https://github.com/sivaram87/Culprit">GitHub</a></nav>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle dark mode">◐ Theme</button>
+  </div>
+</header>
+<div class="progress" id="progress" aria-hidden="true"></div>
+
+<article>
+  <div class="kicker">The story behind the tool</div>
+  <h1>The flag that broke checkout, and the tool we built so nobody has to hunt for it again</h1>
+  <p class="dek">Why mobile teams need to know <em>which</em> feature flag caused a crash spike, what Culprit does about it, where it honestly falls short, and where we're taking it next.</p>
+  <div class="meta">October 2026 · about 10 minutes to read</div>
+
+  <nav class="toc" aria-label="In this article">
+    <strong>In this article</strong>
+    <ol>
+      <li><a href="#night">A night every mobile team knows</a></li>
+      <li><a href="#origin">Where Culprit came from</a></li>
+      <li><a href="#what">What it does, in plain words</a></li>
+      <li><a href="#why">Why it helps more than another dashboard</a></li>
+      <li><a href="#tradeoffs">The honest ledger: pros and cons</a></li>
+      <li><a href="#use">How to start using it</a></li>
+      <li><a href="#roadmap">Where we're going</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="night">A night every mobile team knows</h2>
+  <p>This isn't one specific incident. It's a composite, and if you've worked on a mobile app with feature flags, you've probably lived some version of it.</p>
+  <div class="scene">
+    <div class="label">Picture this</div>
+    <p>It's past midnight. The crash-free rate alert fires. The on-call engineer opens the crash dashboard: crashes are clearly up, but the stack traces point at a dozen different places. They open the flag tool. Eleven flags and three experiments are running. Two rollouts were bumped this afternoon. They scroll Slack to see who changed what. They filter crashes by app version, then by OS, then try to line the timing up with a rollout.</p>
+    <p>Forty-five minutes later they have a guess: probably the new checkout flow, probably on the latest version. They aren't sure enough to switch it off, so they message the person who owns it, who is asleep.</p>
+  </div>
+  <p>Notice what went wrong. The tools worked fine. The crash tool caught the crashes and the flag tool held the flags. But the one question that mattered, <em>which change caused this</em>, sat in the gap between them, and a tired person had to bridge it by hand.</p>
+  <p>On the web, the safety net is a rollback. On mobile there isn't one: once a build is in the store, it lives on people's phones for months. A feature flag is the fastest lever a mobile team has. So the gap between "crashes went up" and "this flag did it" isn't a nice-to-have. It's the difference between a five-minute fix and a lost night.</p>
+
+  <h2 id="origin">Where Culprit came from</h2>
+  <p>Culprit didn't start as a crash tool. It started with a broader question: <em>what slows a growing mobile team down?</em> The usual suspects came up straight away: experimentation and feature flags, pull request review, testability, reliability, and monitoring.</p>
+  <p>Our first instinct was to build one platform that covered all five. Then we looked honestly at what already exists. Feature flags are a solved problem (Firebase Remote Config, Statsig, LaunchDarkly). Crash reporting is a solved problem (Crashlytics, Sentry). PR linting, test frameworks, staged rollouts: all solved, and mostly well. Building a sixth platform that did all of it slightly worse would have helped no one.</p>
+  <p>So we asked a sharper question instead: <em>where are mobile tools still behind?</em> Almost every answer came back to one fact: <strong>mobile can't roll back</strong>. Most tools were designed for the web, where that never happens. Among the gaps we listed, one stood out as the most painful and the most fixable:</p>
+  <blockquote>Crash tools tell you crashes went up. Flag tools tell you what's switched on. Nothing tells you which one caused the other, and nothing switches it off.</blockquote>
+  <p>That gap became Culprit. The name says the job: find the culprit.</p>
+  <p>We set ourselves three rules from day one. <strong>Don't replace anything</strong> a team already uses; read from it. <strong>Keep it small</strong>: a short wrapper in the app and one scheduled job, with no new servers to run. And <strong>never let automation make things worse</strong>: anything that can switch off a feature has to be cautious, auditable and easy to undo.</p>
+
+  <h2 id="what">What it does, in plain words</h2>
+  <p>Culprit has three parts.</p>
+  <h3>1. The app tags every crash with the flags the user had</h3>
+  <p>Your app reads watched flags through a tiny <code>Flags</code> wrapper (about 30 lines, no vendor imports). It attaches the variant the user actually got, like <code>ff_new_checkout=on</code>, to every crash and session in your crash tool. It also checks a <code>killswitch_new_checkout</code> switch first, so the app can be told to fall back to the safe version.</p>
+  <h3>2. A job compares every variant with its control</h3>
+  <p>Every 15 minutes, a small job on Google Cloud counts, for the last 24 hours, how many users each variant had and how many of them hit a problem. It does this separately for each <strong>app version</strong> and each <strong>kind of problem</strong>: crashes, ANRs (the app freezing) and non-fatal errors. Then it asks a simple question: is this variant clearly worse than the people who didn't get it?</p>
+  <p>"Clearly" is deliberately strict. There must be enough users, enough affected users, a rate at least twice control's, and a statistical test that holds up even though dozens of flags are checked every run. Most noise never makes it through.</p>
+  <h3>3. It tells your team, and can step in</h3>
+  <p>When something is clearly worse, your team gets one Slack message that answers the questions the on-call engineer spent 45 minutes on:</p>
+  <div class="slack"><b class="who">Culprit</b>🚨 <b>new_checkout=on</b> on v5.2: crash rate 1.20% vs control 0.20% (120/10000 users, p=1.1e-17). Action: <b>killed</b>. Undo: turn <code>killswitch_new_checkout</code> off in Statsig.
+Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% control).</div>
+  <p>Which flag, which variant, which version, how much worse, how sure, where it's concentrated, and what was done about it. If you've opted that flag in, Culprit has already switched it to the safe path. On their next refresh, users get the control experience and stop crashing.</p>
+  <p>It works with <strong>Crashlytics or Sentry</strong> for crash data and <strong>Firebase Remote Config or Statsig</strong> for flags, in any combination. Every finding is logged to BigQuery, and you can see the history in Grafana or Looker Studio.</p>
+
+  <h2 id="why">Why it helps more than another dashboard</h2>
+  <p>It's tempting to think this is a dashboard problem: put crashes and flags on one screen and let people spot the pattern. We don't think it is, for a few human reasons.</p>
+  <p><strong>People are bad at spotting causes at 3am, and nobody should have to.</strong> Dashboards still ask a person to notice the pattern, form a hypothesis and check it. Culprit does the checking first and hands over a conclusion with the evidence attached. The engineer's job changes from detective to reviewer.</p>
+  <p><strong>The comparison is fair by design.</strong> Comparing users who got a variant with users who didn't, on the same app version and over the same 24 hours, filters out most of what fools people: a bad day for one OS, a spike in traffic, an unrelated bug in that release. If the variant users crash and the control users on the same version don't, the variant is the likely culprit.</p>
+  <p><strong>It catches what crash-free rates hide.</strong> A variant rolled out to 5% of users can double their crash rate while barely moving the overall number. Per-version, per-signal comparison finds it anyway, including freezes (ANRs) that never show up as crashes.</p>
+  <p><strong>It shortens the path from "we know" to "it's fixed".</strong> Knowing the cause is half the battle. The other half is finding someone who can flip the flag. For flags you've opted in, Culprit does that within minutes, and leaves a clear note on how to undo it.</p>
+  <p><strong>It builds trust instead of asking for it.</strong> Culprit starts in alert-only mode. You run it against the last 30 days of your own data first and check its findings against incidents you remember. You only let it act once it has earned that. We think that's the right relationship between a team and its automation.</p>
+
+  <h2 id="tradeoffs">The honest ledger: pros and cons</h2>
+  <p>No tool is free. Here's what Culprit gives you, and what it asks of you.</p>
+  <div class="ledger">
+    <section class="pros" aria-labelledby="pros-h">
+      <h3 id="pros-h">What you get</h3>
+      <ul>
+        <li><b>A named cause, not a symptom</b><span>Flag, variant, app version and signal, with the evidence attached.</span></li>
+        <li><b>Few false alarms</b><span>Minimum samples, a 2× ratio, and multiple-comparison correction.</span></li>
+        <li><b>Crashes, ANRs and errors</b><span>Each checked on its own, so freezes aren't hidden by flat crash rates.</span></li>
+        <li><b>Where it happens</b><span>An OS and device breakdown in every alert.</span></li>
+        <li><b>Cautious automation</b><span>Off by default, opt-in per flag, only ever toward the safe path, at most one kill a day.</span></li>
+        <li><b>Fits your stack</b><span>Crashlytics or Sentry, Remote Config or Statsig. Nothing is replaced.</span></li>
+        <li><b>Small footprint</b><span>A wrapper in the app and one scheduled job. Open source, easy to read.</span></li>
+        <li><b>A record of what happened</b><span>Every finding and kill is logged, with dashboards ready to use.</span></li>
+      </ul>
+    </section>
+    <section class="cons" aria-labelledby="cons-h">
+      <h3 id="cons-h">What it costs, and its limits</h3>
+      <ul>
+        <li><b>It's early</b><span>The logic is well tested offline, but it hasn't been battle-tested in production yet. Start in staging.</span></li>
+        <li><b>It needs discipline</b><span>Watched flags must be read through the wrapper, and the flag list lives in two places that must match.</span></li>
+        <li><b>It assumes fair assignment</b><span>If a variant is targeted at specific users (say, only new OS versions), the comparison can be biased. Random rollouts work best.</span></li>
+        <li><b>Minutes, not seconds</b><span>It runs every 15 minutes over a 24-hour window. It's a fast safety net, not an instant one.</span></li>
+        <li><b>Low-traffic flags are slow to judge</b><span>Fixed thresholds need enough users before they can say anything.</span></li>
+        <li><b>Some setup costs</b><span>Crashlytics allows about 10 watched flags. Sentry needs app-start traces at 100%, which uses quota. The job runs on Google Cloud even if your tools don't.</span></li>
+        <li><b>Breakdowns show shares, not rates</b><span>"62% of variant crashes are on Android 14" says where to look, not each device's crash rate.</span></li>
+        <li><b>Abuse is reduced, not impossible</b><span>Fake crash reports could, in theory, push a flag to control. Caps and limits make this hard and harmless, but not impossible.</span></li>
+      </ul>
+    </section>
+  </div>
+  <p>Our take: if your team ships behind feature flags and has ever lost an evening to "which change did this?", the costs are small next to the hours it saves. If you rarely use flags, or your rollouts are heavily targeted rather than random, Culprit will have less to offer you.</p>
+
+  <h2 id="use">How to start using it</h2>
+  <p>You can be in alert-only mode in an afternoon. The <a href="./#setup">interactive setup guide</a> shows the exact code and commands for your tools and platform. Here's the shape of it:</p>
+  <ol class="steps">
+    <li><strong>Connect your crash data.</strong> With Crashlytics, turn on BigQuery export. With Sentry, sample app-start traces at 100% and create a read-only token.</li>
+    <li><strong>Add the <code>Flags</code> wrapper</strong> to your iOS or Android app and connect it to your flag and crash tools. That's a few lines at startup.</li>
+    <li><strong>Create a kill switch per watched flag</strong>: a Remote Config boolean or a disabled Statsig gate.</li>
+    <li><strong>List your watched flags</strong> in <code>flags.json</code>, with each flag's safe value.</li>
+    <li><strong>Backtest.</strong> Run <code>python main.py --backtest 30</code> and check that what it would have flagged matches incidents you remember.</li>
+    <li><strong>Deploy with one script</strong>, in alert-only mode. Watch the alerts for a couple of weeks.</li>
+    <li><strong>Turn on auto-kill for one flag</strong> once you trust it, and widen from there.</li>
+  </ol>
+  <p>Want to see how strict it is before installing anything? The <a href="./#try">detector simulator</a> on our homepage runs the same rules in your browser. Try a small, noisy sample and watch it stay quiet.</p>
+
+  <h2 id="roadmap">Where we're going</h2>
+  <p>Culprit is the first step of a bigger idea: tools built for the fact that mobile can't roll back. Here's what's next, roughly in order. These are directions, not dates. Real-world feedback will reorder them.</p>
+  <div class="road">
+    <div class="stage">
+      <span class="when">Next</span>
+      <h3>Make Culprit sharper</h3>
+      <ul>
+        <li><strong>Remember undos and false alarms</strong>, so the dashboard shows each kill switch's current state and how often alerts were right.</li>
+        <li><strong>Sequential testing</strong>: a smarter statistical method that reaches confident answers faster on low-traffic flags without raising false alarms.</li>
+        <li><strong>Detection per OS version</strong>, for regressions too small to move the overall rate.</li>
+      </ul>
+    </div>
+    <div class="stage">
+      <span class="when">Then</span>
+      <h3>Meet more teams where they are</h3>
+      <ul>
+        <li><strong>More flag tools</strong> such as LaunchDarkly and Unleash, and <strong>more crash tools</strong> such as Bugsnag and Embrace. Each is one small adapter.</li>
+        <li><strong>Field reports from staging and production</strong>, so the thresholds and filters are tuned on real data, not just tests.</li>
+      </ul>
+    </div>
+    <div class="stage later">
+      <span class="when">Later: the wider "mobile can't roll back" toolbox</span>
+      <h3>Siblings for the other gaps we found</h3>
+      <ul>
+        <li><strong>Safe flag cleanup</strong>: knowing when a flag can be deleted because almost no one is still on an app version that reads it.</li>
+        <li><strong>Backend changes vs old app versions</strong>: catching API changes that would break versions still on people's phones.</li>
+        <li><strong>Fairer experiment results</strong>: correcting A/B results for the uneven way users update their apps.</li>
+        <li><strong>Mobile-aware PR review</strong>: spotting main-thread work, new permissions and app-size jumps before they ship.</li>
+        <li><strong>Store-rejection checks</strong>: flagging likely App Store and Play rejections before you submit.</li>
+      </ul>
+    </div>
+  </div>
+  <p>Every one of these comes from the same belief that started Culprit: the hard part of mobile reliability isn't collecting data. It's turning the data you already have into the right decision, quickly, while people sleep.</p>
+
+  <div class="cta">
+    <strong>Try it, break it, tell us.</strong> Culprit is open source. Run it in staging, open an issue when it gets something wrong, or suggest the next adapter you need.
+    <div><a class="btn" href="https://github.com/sivaram87/Culprit">Culprit on GitHub</a><a class="btn alt" href="./#setup">Setup guide</a><a class="btn alt" href="./#try">Try the detector</a></div>
+  </div>
+</article>
+
+<footer>Culprit · open source on <a href="https://github.com/sivaram87/Culprit">GitHub</a> · <a href="./">Back to the homepage</a></footer>
+
+<script>
+(function () {
+  const root = document.documentElement;
+  try { const t = localStorage.getItem("culprit-theme"); if (t) root.dataset.theme = t; } catch (e) {}
+  document.getElementById("themeBtn").addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("culprit-theme", root.dataset.theme); } catch (e) {}
+  });
+  const bar = document.getElementById("progress");
+  const onScroll = () => {
+    const max = document.documentElement.scrollHeight - innerHeight;
+    bar.style.width = (max > 0 ? (scrollY / max) * 100 : 0) + "%";
+  };
+  addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
+})();
+</script>
+</body>
+</html>
