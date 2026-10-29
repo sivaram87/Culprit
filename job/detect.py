@@ -2,6 +2,7 @@
 and build the Remote Config change that kills them. No I/O, so it's all testable."""
 import copy
 import math
+import re
 from dataclasses import dataclass
 
 # ponytail: fixed thresholds + one-sided z-test. Move to sequential testing
@@ -76,8 +77,15 @@ def action_for(f, flags, auto_kill, kills_today, max_kills=1):
     return "kill" if kills_today < max_kills else "kill_capped"
 
 
+def kill_id(flag):
+    """killswitch_<flag>, refusing any name that could smuggle a path or odd key."""
+    if not re.fullmatch(r"[a-z0-9_]+", flag):
+        raise ValueError(f"bad flag name: {flag!r}")
+    return KILL_PREFIX + flag
+
+
 def is_killed(template, flag):
-    param = template.get("parameters", {}).get(KILL_PREFIX + flag, {})
+    param = template.get("parameters", {}).get(kill_id(flag), {})
     return param.get("defaultValue", {}).get("value") == "true"
 
 
@@ -87,7 +95,7 @@ def kill_template(template, flag):
     # if one is, the API rejects the duplicate key and nothing changes.
     new = copy.deepcopy(template)
     new.pop("version", None)
-    new.setdefault("parameters", {})[KILL_PREFIX + flag] = {
+    new.setdefault("parameters", {})[kill_id(flag)] = {
         "defaultValue": {"value": "true"},
         "valueType": "BOOLEAN",
     }
@@ -97,7 +105,7 @@ def kill_template(template, flag):
 
 def check_only_kill(old, new, flag):
     """Refuse any change other than setting killswitch_<flag> to true."""
-    key = KILL_PREFIX + flag
+    key = kill_id(flag)
     old_params = dict(old.get("parameters", {}))
     new_params = dict(new.get("parameters", {}))
     old_params.pop(key, None)

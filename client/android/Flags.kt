@@ -1,28 +1,26 @@
-import com.google.firebase.Firebase
-import com.google.firebase.analytics.analytics
-import com.google.firebase.crashlytics.crashlytics
-import com.google.firebase.remoteconfig.FirebaseRemoteConfig
-import com.google.firebase.remoteconfig.remoteConfig
-
 /** The one way app code reads feature flags. Honors `killswitch_<name>` and tags
- *  crashes + sessions with the variant so Flag Guard can compare crash rates. */
+ *  crashes + sessions with the variant so Flag Guard can compare crash rates.
+ *  Vendor-neutral: wire `value`, `isKilled` and `tagSinks` once at startup
+ *  (Firebase / Statsig / Crashlytics / Sentry snippets are in the README). */
 object Flags {
     /** Watched flags -> control (safe) value. Keep in sync with job/flags.json.
-     *  Names must be <= 21 chars ("ff_" + name hits Analytics' 24-char limit). */
+     *  Names: lowercase a-z, 0-9, _ and <= 21 chars (Analytics' 24-char limit with "ff_"). */
     val watched = mapOf("new_checkout" to "off")
 
-    fun variant(name: String, rc: FirebaseRemoteConfig = Firebase.remoteConfig): String =
-        resolve(name, rc.getString(name), rc.getBoolean("killswitch_$name"))
+    var value: (String) -> String = { "" }
+    var isKilled: (String) -> Boolean = { false }
+    var tagSinks: List<(key: String, value: String) -> Unit> = emptyList()
+
+    fun variant(name: String): String = resolve(name, value(name), isKilled(name))
 
     fun resolve(name: String, value: String, killed: Boolean): String =
         if (killed) watched[name] ?: value else value
 
-    /** Call after every successful Remote Config activate(). */
-    fun tag(rc: FirebaseRemoteConfig = Firebase.remoteConfig) {
+    /** Call after every flag refresh (e.g. Remote Config activate, Statsig update). */
+    fun tag() {
         for (name in watched.keys) {
-            val v = variant(name, rc)
-            Firebase.crashlytics.setCustomKey("ff_$name", v)
-            Firebase.analytics.setUserProperty("ff_$name", v)
+            val v = variant(name)
+            tagSinks.forEach { it("ff_$name", v) }
         }
     }
 }

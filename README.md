@@ -2,12 +2,14 @@
 
 **Find the feature-flag variant behind a mobile crash, ANR or error spike, and switch it off automatically.**
 
-Crashlytics shows that crashes, ANRs or non-fatal errors went up. Flag Guard shows *why*: "variant `on` of `new_checkout` crashes 6× more than control on v5.2". It posts that to Slack and, if you've allowed it, turns the variant off with a kill switch, all within about 15 minutes and without anyone being woken up to compare dashboards.
+Your crash tool shows that crashes, ANRs or non-fatal errors went up. Flag Guard shows *why*: "variant `on` of `new_checkout` crashes 6× more than control on v5.2". It posts that to Slack and, if you've allowed it, turns the variant off with a kill switch, all within about 15 minutes and without anyone being woken up to compare dashboards.
+
+Works with **Crashlytics or Sentry** for crash data, and **Firebase Remote Config or Statsig** for flags, in any combination.
 
 ```
 :rotating_light: new_checkout=on on v5.2: crash rate 1.20% vs control 0.20%
 (120/10000 users, p=1.1e-17). Action: killed.
-Undo: set `killswitch_new_checkout` to false in Remote Config.
+Undo: turn `killswitch_new_checkout` off in Statsig.
 ```
 
 ---
@@ -16,12 +18,13 @@ Undo: set `killswitch_new_checkout` to false in Remote Config.
 
 - [Why](#why)
 - [How it works](#how-it-works)
+- [Supported tools](#supported-tools)
 - [Repository layout](#repository-layout)
 - [Requirements](#requirements)
 - [Setup](#setup)
-  - [1. Turn on BigQuery export](#1-turn-on-bigquery-export)
+  - [1. Prepare your crash data source](#1-prepare-your-crash-data-source)
   - [2. Add the app wrapper](#2-add-the-app-wrapper)
-  - [3. Create kill-switch parameters](#3-create-kill-switch-parameters)
+  - [3. Create kill switches](#3-create-kill-switches)
   - [4. Configure watched flags](#4-configure-watched-flags)
   - [5. Backtest](#5-backtest)
   - [6. Deploy](#6-deploy)
@@ -51,69 +54,147 @@ Crash tools handle step 1. Flag Guard handles steps 2 to 4.
 ## How it works
 
 ```
- ┌──────────── App (iOS / Android) ────────────┐
- │ Flags.variant("new_checkout")                │
- │   ├─ killswitch_new_checkout == true → control
- │   └─ else → Remote Config value              │
- │ Flags.tag() → Crashlytics key   ff_new_checkout=on
- │             → Analytics property ff_new_checkout=on
- └──────────────────────┬──────────────────────┘
-                        │ BigQuery export (streaming)
-                        ▼
+ ┌──────────────── App (iOS / Android) ────────────────┐
+ │ Flags.variant("new_checkout")                        │
+ │   ├─ killswitch_new_checkout on → control value      │
+ │   └─ else → value from Remote Config / Statsig       │
+ │ Flags.tag() → ff_new_checkout=on on every crash      │
+ │               and session (Crashlytics or Sentry)    │
+ └──────────────────────────┬──────────────────────────┘
+                            │ BigQuery export or Sentry API
+                            ▼
  ┌──────── Flag Guard job (Cloud Run, every 15 min) ────────┐
- │ 1. Query the last 24h: affected users and active users   │
+ │ 1. Count the last 24h: affected users and active users   │
  │    per (flag, variant, app version, signal)              │
  │    signal = FATAL | ANR | NON_FATAL                      │
  │ 2. detect(): compare each variant with control           │
  │ 3. Skip anything already reported in the last 24h        │
- │ 4. Optionally set killswitch_<flag>=true in Remote Config│
+ │ 4. Optionally turn on killswitch_<flag>                  │
+ │    (Remote Config parameter or Statsig gate)             │
  │ 5. Post to Slack                                         │
  │ 6. Write an audit row to BigQuery                        │
  └──────────────────────────────────────────────────────────┘
 ```
 
-**Why a separate kill-switch parameter?** Firebase A/B Testing has no public API for stopping an experiment, and editing an experiment's targeting automatically is risky. A separate boolean, `killswitch_<flag>`, that the app checks first works with any flag provider, can only ever send users to the control (known-good) path, and is easy to undo.
+**Why a separate kill switch?** Editing an experiment's targeting automatically is risky, and Firebase A/B Testing has no public API for stopping an experiment. A separate boolean, `killswitch_<flag>`, that the app checks first works with any flag tool, can only ever send users to the control (known-good) path, and is easy to undo.
+
+## Supported tools
+
+Two settings choose the tools. Any combination works.
+
+| Setting | Value | Crash data / kill target |
+|---|---|---|
+| `SIGNAL_SOURCE` | `crashlytics` (default) | Crashlytics + Google Analytics, through the BigQuery export |
+| | `sentry` | Sentry error events + app-start traces, through the Sentry API |
+| `FLAG_TOOL` | `firebase` (default) | Firebase Remote Config parameter `killswitch_<flag>` |
+| | `statsig` | Statsig feature gate `killswitch_<flag>` |
+
+Whatever the tools, the job runs on Google Cloud (Cloud Run, Cloud Scheduler) and keeps its audit log in BigQuery.
 
 ## Repository layout
 
 ```
 client/
-  ios/Flags.swift          Flag wrapper: kill-switch check + crash/session tagging
+  ios/Flags.swift          Vendor-neutral flag wrapper: kill-switch check + tagging
   ios/FlagsTests.swift     XCTest: kill switch serves control
   android/Flags.kt         Same wrapper for Android
   android/FlagsTest.kt     JUnit: kill switch serves control
 job/
-  detect.py                Detection + Remote Config safety logic, no side effects
-  main.py                  BigQuery queries, Slack, Remote Config, audit, CLI
+  detect.py                Detection, kill policy and safety checks, no side effects
+  main.py                  Crashlytics/BigQuery counts, Remote Config kill, Slack, audit, CLI
+  source_sentry.py         Sentry counts
+  kill_statsig.py          Statsig kill
   flags.json               Watched flags: control variant + auto_kill opt-in
-  test_detect.py           Unit tests (plain asserts, no framework)
+  test_detect.py           Detector tests (plain asserts, no framework)
+  test_adapters.py         Sentry, Statsig and dispatch tests (no network)
   deploy.sh                One-shot GCP setup and deploy
   Dockerfile, requirements.txt
 ```
 
 ## Requirements
 
-- A Firebase project using **Crashlytics**, **Google Analytics for Firebase** and **Remote Config**
-- A Google Cloud project with billing enabled (for BigQuery, Cloud Run and Cloud Scheduler)
+Always:
+- A Google Cloud project with billing enabled (Cloud Run, Cloud Scheduler, Secret Manager, BigQuery for the audit log)
 - `gcloud` and `bq` CLIs, logged in as a project owner (needed once, for deploy)
 - Python 3.12 to run locally
 - A Slack [incoming webhook](https://api.slack.com/messaging/webhooks)
-- Firebase SDKs: iOS 10+ / Android BoM 32.5+ (they provide the `Firebase.*` Kotlin accessors used here)
+
+Per tool:
+
+| Tool | You need |
+|---|---|
+| Crashlytics | Crashlytics and Google Analytics for Firebase in the app, with BigQuery export on |
+| Sentry | Sentry SDK with performance tracing, app-start traces sampled at 100%, and an auth token with `org:read` and `event:read` only |
+| Firebase Remote Config | Remote Config in the app, in the same project the job deploys to |
+| Statsig | Statsig SDK in the app, and a Statsig Console API key |
 
 ## Setup
 
-### 1. Turn on BigQuery export
+### 1. Prepare your crash data source
 
-In the Firebase console, open **Project settings → Integrations → BigQuery** and enable:
-
+**Crashlytics:** in the Firebase console, open **Project settings → Integrations → BigQuery** and enable:
 - **Crashlytics** with streaming export turned on. This creates `firebase_crashlytics.<app>_REALTIME`.
 - **Google Analytics** with streaming (intraday) export turned on. This creates `analytics_<id>.events_intraday_*`.
 
 Wait until data appears (up to 24h for the first daily tables).
 
+**Sentry:** Sentry can't break its session counts down by custom tags, so Flag Guard counts active users from **app-start traces**, which carry the same `ff_*` tags as errors. Sample them at 100%: set `tracesSampleRate = 1.0`, or use a `tracesSampler` that returns `1.0` for the first screen-load transaction (op `ui.load`), which holds the app-start spans. Sentry's mobile SDKs use an install ID as `user.id` by default, so counts are distinct installs, the same unit as Crashlytics.
+
+Create an auth token (**Settings → Auth Tokens**) with **only** `org:read` and `event:read`, and note your organization slug and numeric project ID.
+
 ### 2. Add the app wrapper
 
-Copy `client/ios/Flags.swift` or `client/android/Flags.kt` into your app. Then:
+Copy `client/ios/Flags.swift` or `client/android/Flags.kt` into your app. The wrapper has no vendor imports. You connect it to your tools once at startup through three hooks:
+
+| Hook | What it does |
+|---|---|
+| `value(name)` | Returns the flag's current variant as a string |
+| `isKilled(name)` | Returns whether `killswitch_<name>` is on |
+| `tagSinks` | Receive `("ff_<name>", variant)` and attach it to crashes and sessions |
+
+**Flag tool: Firebase Remote Config**
+```swift
+Flags.value = { RemoteConfig.remoteConfig()[$0].stringValue }
+Flags.isKilled = { RemoteConfig.remoteConfig()["killswitch_\($0)"].boolValue }
+```
+```kotlin
+Flags.value = { Firebase.remoteConfig.getString(it) }
+Flags.isKilled = { Firebase.remoteConfig.getBoolean("killswitch_$it") }
+```
+
+**Flag tool: Statsig** (feature gates; for experiments, return the group name your Statsig SDK exposes)
+```swift
+Flags.value = { Statsig.checkGate($0) ? "on" : "off" }
+Flags.isKilled = { Statsig.checkGate("killswitch_\($0)") }
+```
+```kotlin
+Flags.value = { if (Statsig.checkGate(it)) "on" else "off" }
+Flags.isKilled = { Statsig.checkGate("killswitch_$it") }
+```
+
+**Crash data: Crashlytics** (tags crashes and Analytics users)
+```swift
+Flags.tagSinks = [{ key, value in
+    Crashlytics.crashlytics().setCustomValue(value, forKey: key)
+    Analytics.setUserProperty(value, forName: key)
+}]
+```
+```kotlin
+Flags.tagSinks = listOf { key, value ->
+    Firebase.crashlytics.setCustomKey(key, value)
+    Firebase.analytics.setUserProperty(key, value)
+}
+```
+
+**Crash data: Sentry** (tags errors and traces)
+```swift
+Flags.tagSinks = [{ key, value in SentrySDK.configureScope { $0.setTag(value: value, key: key) } }]
+```
+```kotlin
+Flags.tagSinks = listOf { key, value -> Sentry.setTag(key, value) }
+```
+
+Then:
 
 1. Put each flag you want watched into `Flags.watched`, with its **control** value:
    ```swift
@@ -123,27 +204,27 @@ Copy `client/ios/Flags.swift` or `client/android/Flags.kt` into your app. Then:
    ```swift
    if Flags.variant("new_checkout") == "on" { showNewCheckout() }
    ```
-   ```kotlin
-   if (Flags.variant("new_checkout") == "on") showNewCheckout()
-   ```
-3. Call `Flags.tag()` after every successful Remote Config `activate()`:
+3. Call `Flags.tag()` **as early as possible at launch** (Remote Config and Statsig both serve cached values right away), and again after every flag refresh:
    ```swift
+   Flags.tag()
    RemoteConfig.remoteConfig().fetchAndActivate { status, _ in
        if status != .error { Flags.tag() }
    }
    ```
    ```kotlin
+   Flags.tag()
    Firebase.remoteConfig.fetchAndActivate().addOnSuccessListener { Flags.tag() }
    ```
+   With Sentry this matters even more: the app-start trace only counts a user for a variant if the tag was set before the trace finished.
 
 Rules:
-- Flag names must be **21 characters or fewer**. The `ff_` prefix plus the name must fit Analytics' 24-character limit for user property names.
-- Watch about **10 flags at most**. Analytics allows 25 user properties per project, and you probably use some already.
+- Flag names use only **lowercase letters, digits and `_`**, and are **21 characters or fewer**. Analytics limits user property names to 24 characters including the `ff_` prefix. The job refuses any other name before it touches a kill switch.
+- With Crashlytics, watch about **10 flags at most**. Analytics allows 25 user properties per project, and you probably use some already.
 - The tag records the variant the user *actually gets*, so after a kill those users count as control and the variant's crash rate stops rising.
 
-### 3. Create kill-switch parameters
+### 3. Create kill switches
 
-For each watched flag, add a Remote Config parameter:
+**Firebase Remote Config:** for each watched flag, add a parameter:
 
 | Key | Type | Default |
 |---|---|---|
@@ -151,7 +232,9 @@ For each watched flag, add a Remote Config parameter:
 
 Keep these parameters **outside parameter groups** (see [Limitations](#limitations)). If one is missing, the job adds it when it first kills that flag.
 
-If a fetch fails, the app keeps its last activated values. If it has never fetched, the kill switch defaults to `false`.
+**Statsig:** for each watched flag, create a feature gate `killswitch_new_checkout` with one rule, **Everyone, 100% pass**, then **disable** the gate. A disabled gate returns `false` for everyone. When the job enables it, everyone gets `true` and the wrapper serves control. If the gate is missing, the job fails loudly and doesn't post the alert, so create the gates before deploying.
+
+If a fetch fails, the app keeps its last values. If it has never fetched, the kill switch reads as off.
 
 ### 4. Configure watched flags
 
@@ -167,47 +250,62 @@ Changes to this file go through code review. That review is the approval step fo
 
 ### 5. Backtest
 
-Before deploying, check what Flag Guard would have flagged over the last 30 days. Use the **batch** Crashlytics table for long backtests, because the realtime table keeps a shorter history.
+Before deploying, check what Flag Guard would have flagged over the last 30 days. Neither `--backtest` nor `--dry-run` (last 24h only) posts to Slack, writes the audit table or touches a kill switch.
 
 ```bash
 cd job
 pip install -r requirements.txt
 gcloud auth application-default login
 export GCP_PROJECT=my-proj
+
+# Crashlytics: use the batch table for long backtests (the realtime one keeps less history)
 export CRASHLYTICS_TABLE=my-proj.firebase_crashlytics.com_example_app_ANDROID
 export ANALYTICS_DATASET=my-proj.analytics_123456
+
+# or Sentry:
+# export SIGNAL_SOURCE=sentry SENTRY_ORG=acme SENTRY_PROJECT_ID=42 SENTRY_AUTH_TOKEN=...
+
 python main.py --backtest 30
 ```
 
-Each output line is a variant that would have triggered an alert. Every one should match an incident you remember. If not, raise the thresholds (see [Configuration reference](#configuration-reference)).
-
-`python main.py --dry-run` checks only the last 24 hours. Neither mode posts to Slack, writes to the audit table or touches Remote Config.
+Each output line is a variant that would have triggered an alert. Every one should match an incident you remember. If not, raise the thresholds (see [Configuration reference](#configuration-reference)). Backtesting with Sentry is limited by your plan's event retention.
 
 ### 6. Deploy
 
 ```bash
 cd job
+
+# Crashlytics + Remote Config
 PROJECT=my-proj \
 CRASHLYTICS_TABLE=my-proj.firebase_crashlytics.com_example_app_ANDROID_REALTIME \
 ANALYTICS_DATASET=analytics_123456 \
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \
 ./deploy.sh
+
+# Sentry + Statsig
+PROJECT=my-proj SIGNAL_SOURCE=sentry FLAG_TOOL=statsig \
+SENTRY_ORG=acme SENTRY_PROJECT_ID=42 SENTRY_AUTH_TOKEN=... \
+STATSIG_CONSOLE_KEY=... \
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \
+./deploy.sh
 ```
+
+Secrets (`SLACK_WEBHOOK_URL`, `SENTRY_AUTH_TOKEN`, `STATSIG_CONSOLE_KEY`) are only needed on the first deploy or to rotate them. They go straight into Secret Manager.
 
 `deploy.sh` is safe to re-run. Re-running it is also how you upgrade: it adds the `signal` column to an audit table created by an older version. It sets up:
 
 - the service account `flagguard@<project>.iam.gserviceaccount.com`
 - the dataset and table `flagguard.actions`, which is the audit log
-- IAM roles (see [Security](#security))
-- the secret `flagguard-slack` in Secret Manager
+- IAM roles for the chosen tools only (see [Security](#security))
+- secrets `flagguard-slack`, plus `flagguard-sentry` and/or `flagguard-statsig` when used
 - the Cloud Run job `flagguard`, built from `Dockerfile`, in **alert-only** mode
 - the Cloud Scheduler job `flagguard-every-15m`
 
 Optional: set `REGION`, which defaults to `us-central1`.
 
-To deploy a second app (iOS and Android are separate Crashlytics tables), deploy again with different values.
+To deploy a second app (iOS and Android are separate Crashlytics tables or Sentry projects), deploy again with different values.
 
-> ⚠️ Note: a second deploy into the same project currently reuses the job name `flagguard`. Rename the job in `deploy.sh` to run both side by side.
+> ⚠️ A second deploy into the same Google Cloud project currently reuses the job name `flagguard`. Rename the job in `deploy.sh` to run both side by side.
 
 ### 7. Turn on auto-kill
 
@@ -222,20 +320,27 @@ Only crash (`FATAL`) and `ANR` findings can kill a flag. `NON_FATAL` findings al
 
 ## Configuration reference
 
-Environment variables read by `main.py`:
+Environment variables read by the job:
 
-| Variable | Required | Description |
+| Variable | Needed for | Description |
 |---|---|---|
-| `GCP_PROJECT` | yes | Firebase / GCP project id |
-| `CRASHLYTICS_TABLE` | yes | `project.firebase_crashlytics.<app>_REALTIME` |
-| `ANALYTICS_DATASET` | yes | `project.analytics_<id>` |
-| `AUDIT_TABLE` | job only | `project.flagguard.actions` |
-| `SLACK_WEBHOOK` | job only | Mounted from Secret Manager by `deploy.sh` |
-| `AUTO_KILL` | no | `1` allows kills. Anything else means alert only (default). |
-| `MIN_USERS` | no | Minimum users in both variant and control (default `500`) |
-| `MIN_CRASHES` | no | Minimum crashing users in the variant (default `10`) |
-| `MIN_RATIO` | no | Variant crash rate must be at least this × control (default `2.0`) |
-| `ALPHA` | no | Significance level before Bonferroni correction (default `0.001`) |
+| `SIGNAL_SOURCE` | — | `crashlytics` (default) or `sentry` |
+| `FLAG_TOOL` | — | `firebase` (default) or `statsig` |
+| `GCP_PROJECT` | always | GCP project id. Also the Firebase project for Crashlytics and Remote Config. |
+| `AUDIT_TABLE` | job | `project.flagguard.actions` |
+| `SLACK_WEBHOOK` | job | Mounted from Secret Manager by `deploy.sh` |
+| `CRASHLYTICS_TABLE` | Crashlytics | `project.firebase_crashlytics.<app>_REALTIME` |
+| `ANALYTICS_DATASET` | Crashlytics | `project.analytics_<id>` |
+| `SENTRY_URL` | Sentry | Default `https://sentry.io`. Set it for the EU region or self-hosted Sentry. |
+| `SENTRY_ORG` | Sentry | Organization slug |
+| `SENTRY_PROJECT_ID` | Sentry | Numeric project ID |
+| `SENTRY_AUTH_TOKEN` | Sentry | Read-only token, mounted from Secret Manager |
+| `STATSIG_CONSOLE_KEY` | Statsig | Console API key, mounted from Secret Manager |
+| `AUTO_KILL` | — | `1` allows kills. Anything else means alert only (default). |
+| `MIN_USERS` | — | Minimum users in both variant and control (default `500`) |
+| `MIN_CRASHES` | — | Minimum affected users in the variant (default `10`) |
+| `MIN_RATIO` | — | Variant rate must be at least this × control (default `2.0`) |
+| `ALPHA` | — | Significance level before Bonferroni correction (default `0.001`) |
 
 Use the `MIN_*` overrides in a staging project, where traffic is small.
 
@@ -248,13 +353,17 @@ Constants in `main.py`:
 
 ## Detection rules
 
-For each watched flag, **app version** and **signal**, every non-control variant is compared with control. The signal comes from Crashlytics' `error_type`:
+For each watched flag, **app version** and **signal**, every non-control variant is compared with control.
 
-| Signal | Meaning | Can auto-kill |
-|---|---|---|
-| `FATAL` | App crashed | yes |
-| `ANR` | App froze for 5s or more (Android only) | yes |
-| `NON_FATAL` | Error recorded with `recordError` / `recordException` | no, alert only | A variant is flagged only when **all** of these hold:
+| Signal | Meaning | Crashlytics | Sentry | Can auto-kill |
+|---|---|---|---|---|
+| `FATAL` | App crashed | `error_type = FATAL` | `error.unhandled:true`, excluding ANRs and hangs | yes |
+| `ANR` | App froze | `error_type = ANR` (Android only) | `error.type:[ApplicationNotResponding,AppHang]` | yes |
+| `NON_FATAL` | Error the app recorded itself | `error_type = NON_FATAL` | `error.handled:true`, excluding ANRs and hangs | no, alert only |
+
+The Sentry filters live in `SIGNAL_QUERIES` in `job/source_sentry.py`. Sentry SDK versions name ANRs and hangs differently, so check them against your own data in staging.
+
+A variant is flagged only when **all** of these hold:
 
 | Check | Default | Why |
 |---|---|---|
@@ -265,9 +374,9 @@ For each watched flag, **app version** and **signal**, every non-control variant
 
 Details:
 - Each signal is compared on its own: an ANR regression is flagged even when the crash rate is flat.
-- Every (flag, version) gets a row for each signal even when the count is zero, so a control group with no ANRs still counts as a control.
-- Units are **distinct affected installs** (`installation_uuid`) over **distinct active installs** (`user_pseudo_id`). The two come from separate exports, so the detector caps crashes at the user count.
-- Breaking results down by version means a crash that exists only in v5.2 isn't hidden by healthy older versions.
+- Every (flag, variant, version) gets a row for each signal even when the count is zero, so a control group with no ANRs still counts as a control.
+- Units are **distinct affected installs** over **distinct active installs**. With Crashlytics those are `installation_uuid` and `user_pseudo_id`. With Sentry both are `count_unique(user)`, with active users taken from app-start traces. The two numbers come from different data, so the detector caps affected users at the user count.
+- Breaking results down by version (Sentry: by release) means a crash that exists only in v5.2 isn't hidden by healthy older versions.
 - The control variant is never flagged.
 - A (flag, variant, version, signal) already reported in the last 24h isn't reported again.
 
@@ -278,25 +387,26 @@ Every alert carries one action:
 | Action | Meaning |
 |---|---|
 | `alerted` | Alert only: auto-kill is off, the flag isn't opted in, or the signal is `NON_FATAL` |
-| `killed` | `killswitch_<flag>` was set to `true` |
+| `killed` | `killswitch_<flag>` was turned on |
 | `already_killed` | The kill switch was already on |
 | `kill_capped` | The daily auto-kill cap was reached, so it's alert only. Kill by hand if needed. |
 
 ## Undoing a kill
 
-In the Firebase console, open Remote Config and set `killswitch_<flag>` back to `false`, then publish. Alternatively, use **Remote Config → Change history** to roll back to the version before the kill.
+- **Remote Config:** set `killswitch_<flag>` back to `false` and publish, or use **Remote Config → Change history** to roll back to the version before the kill.
+- **Statsig:** disable the gate `killswitch_<flag>` again. Statsig's audit log shows when the job enabled it.
 
-Find the cause before you undo. The detector will flag the variant again once its crash rate climbs back.
+Find the cause before you undo. The detector will flag the variant again once its rate climbs back.
 
 ## Testing
 
-**Detector and safety logic** (no cloud access needed):
+All tests run without network access or cloud libraries:
 
 ```bash
-cd job && python3 test_detect.py
+cd job && python3 test_detect.py && python3 test_adapters.py
 ```
 
-Covers:
+`test_detect.py` covers:
 - a clear regression is flagged
 - small samples and equal rates are ignored
 - only the regressing version is flagged
@@ -307,44 +417,56 @@ Covers:
 - each signal produces its own finding
 - kill policy: non-fatals never kill, the daily cap applies, and both opt-ins are required
 - bad data (crashes greater than users) doesn't crash the detector
-- `kill_template` changes only `killswitch_<flag>`
-- the safety check rejects any other edit
+- `kill_template` changes only `killswitch_<flag>`, and the safety check rejects any other edit
+
+`test_adapters.py` covers:
+- Sentry results are merged with a zero for every signal that had no events
+- Sentry rows are parsed into the detector's format and produce findings
+- Sentry paging follows the `Link` header to the end
+- flag names that could inject into a URL or key are rejected
+- the Statsig kill only ever writes `.../gates/killswitch_<flag>/enable`, and reports `already_killed`
+- all four combinations of crash source and flag tool reach the right code, and unknown values are refused
 
 **App wrappers:** `FlagsTests.swift` / `FlagsTest.kt` check that the kill switch serves control. Add them to your app's test target. Set the `@testable import` module name to match your app.
 
-**End to end (staging Firebase project):**
-1. Add a watched flag `crash_demo` whose variant `b` crashes on purpose.
+**End to end (staging project):**
+1. Add a watched flag `crash_demo` whose variant `b` crashes on purpose. Also add an ANR (block the main thread for more than 5s) and a recorded non-fatal error.
 2. Deploy with `MIN_USERS=20 MIN_CRASHES=3` and `AUTO_KILL=1`, with `"auto_kill": true` on `crash_demo`.
-3. Roll `b` out to test devices and trigger the crash.
-4. Expect a Slack alert and `killswitch_crash_demo=true` within about 30 minutes. After the next fetch, devices serve control and the crashes stop.
+3. Roll `b` out to test devices and trigger each error.
+4. Expect Slack alerts and the kill switch turned on within about 30 minutes. After the next fetch, devices serve control and the crashes stop.
+5. With Sentry, also run `python main.py --dry-run` and check that the counts match Sentry's own UI. That confirms the `SIGNAL_QUERIES` filters and that app-start traces carry the `ff_*` tags.
 
 ## Security
 
 | Risk | Mitigation |
 |---|---|
-| The service account can edit any Remote Config parameter (the role can't be scoped further) | `check_only_kill` refuses to write anything except `killswitch_<flag>=true`. The check runs on every write and is covered by tests. Writes use the ETag (`If-Match`), so a concurrent human edit isn't overwritten. Remote Config history allows one-click rollback. |
-| Fake crash reports: the Firebase API key ships in the app, so crash data can be forged to get a feature killed | A kill only sends users to the control path. Kills need ≥ 10 distinct affected installs plus a significant result, are capped at 1 per day, and every one is posted to Slack. Non-fatal errors, the easiest signal to fake, can never trigger a kill. |
+| The flag-tool credential can change any flag: the Remote Config role and the Statsig Console API key can't be narrowed further | The job only ever turns **on** `killswitch_<flag>`. Flag names are checked against `[a-z0-9_]+` before use. Remote Config writes go through `check_only_kill`, which refuses any other change, and use the ETag (`If-Match`) so a concurrent human edit isn't overwritten. The only Statsig write is `PUT .../gates/killswitch_<flag>/enable`. Both are covered by tests, and both tools keep a change history. |
+| Fake crash reports: crash SDK keys ship in the app, so crash data can be forged to get a feature killed | A kill only sends users to the control path. Kills need ≥ 10 distinct affected installs plus a significant result, are capped at 1 per day, and every one is posted to Slack. Non-fatal errors, the easiest signal to fake, can never trigger a kill. |
 | A bad detection kills a winning experiment | Alert-only is the default. Auto-kill is opt-in per flag through a reviewed PR, and must also be enabled globally with `AUTO_KILL=1`. |
-| Secrets leak | The Slack webhook lives only in Secret Manager. There are no service-account key files, because Cloud Run attaches the account. |
-| PII | Crash keys and user properties contain only flag name and variant. Slack messages and audit rows contain only aggregate counts. |
-| Over-broad access | `bigquery.dataViewer` on the two export datasets, `bigquery.jobUser`, `bigquery.dataEditor` on the audit table only, `firebaseremoteconfig.admin`, `secretAccessor` on one secret, and `run.invoker` on this job only. |
+| Secrets leak | The Slack webhook, Sentry token and Statsig key live only in Secret Manager, and each is mounted only when its tool is chosen. There are no service-account key files, because Cloud Run attaches the account. |
+| Sentry token misuse | The token needs only `org:read` and `event:read`. It can read error data but change nothing. |
+| PII | Tags contain only flag name and variant. Slack messages and audit rows contain only aggregate counts. |
+| Over-broad access | Always: `bigquery.jobUser`, `bigquery.dataEditor` on the audit table only, `secretAccessor` on its own secrets, and `run.invoker` on this job only. Crashlytics adds `bigquery.dataViewer` on the two export datasets. Remote Config adds `firebaseremoteconfig.admin`. |
 | Supply chain | Three pinned dependencies: `google-cloud-bigquery`, `google-auth`, `requests`. |
 
 ## Limitations
 
-- **ANRs are Android-only.** Crashlytics doesn't report iOS hangs as ANRs, so iOS ANR counts are always zero and never trigger.
+- **Sentry needs app-start traces at 100%.** Without them, active users per variant are undercounted and rates are inflated. This can cost Sentry quota.
+- **The Sentry filters for ANRs and hangs need checking against your SDK version.** They live in one dict in `source_sentry.py`.
+- **ANRs from Crashlytics are Android-only.** Crashlytics doesn't report iOS hangs as ANRs. Sentry reports iOS app hangs, which count as `ANR`.
+- **Statsig support covers feature gates.** For experiments, `Flags.value` must return the group name, and you need a kill-switch gate per experiment.
 - **One set of thresholds for all signals.** Non-fatal rates are usually much higher than crash rates. That's fine for a ratio test, but noisy apps may want separate thresholds later.
-- **Kill-switch parameters must not be inside a Remote Config parameter group.** If one is, the API rejects the update and nothing changes; the job fails loudly.
+- **Remote Config kill-switch parameters must not be inside a parameter group.** If one is, the API rejects the update and nothing changes; the job fails loudly.
 - **The flag list is kept in two places** (`Flags.watched` and `flags.json`) and must match.
 - **Fixed thresholds plus a z-test.** Simple and predictable, but slower to react than sequential testing on low-traffic flags.
-- **Firebase only.** Using Sentry or Statsig means replacing the SQL query and the `kill()` call in `main.py`.
 - **One app per job.** iOS and Android need separate deploys.
+- **Switching tools doesn't remove old access.** Redeploying with a different tool doesn't revoke the previous tool's IAM role or delete its secret. Remove those by hand.
 
 ## Roadmap
 
 These will be added when there's a need:
 
-- Sentry and Statsig adapters
+- More tools: LaunchDarkly or Unleash for flags, Bugsnag or Embrace for crashes. Each is one `counts` or `kill` function plus a branch in `main.py`.
 - Sequential testing (mSPRT) for faster, safer detection
 - Breakdown by device and OS
 - A dashboard on top of the audit table

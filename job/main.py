@@ -1,7 +1,9 @@
 """Flag Guard job: crash rate per flag variant -> Slack alert -> optional kill switch.
 
 Env:
-  GCP_PROJECT        Firebase / GCP project id
+  SIGNAL_SOURCE      crashlytics (default) | sentry   -- see source_sentry.py for Sentry env
+  FLAG_TOOL          firebase (default) | statsig     -- see kill_statsig.py for Statsig env
+  GCP_PROJECT        GCP project id (audit table; also Firebase project for crashlytics/firebase)
   CRASHLYTICS_TABLE  project.firebase_crashlytics.<app>_REALTIME (batch table for long backtests)
   ANALYTICS_DATASET  project.analytics_<id>
   AUDIT_TABLE        project.flagguard.actions
@@ -24,6 +26,8 @@ from google.auth.transport.requests import AuthorizedSession
 from google.cloud import bigquery
 
 import detect
+import kill_statsig
+import source_sentry
 
 RC_URL = "https://firebaseremoteconfig.googleapis.com/v1/projects/{}/remoteConfig"
 MAX_KILLS_PER_DAY = 1
@@ -64,7 +68,7 @@ def query(bq, sql, **params):
     return [dict(r) for r in bq.query(sql, job_config=cfg).result()]
 
 
-def counts(bq, end):
+def counts_bigquery(bq, end):
     sql = SQL.format(
         crash_table=os.environ["CRASHLYTICS_TABLE"],
         analytics=os.environ["ANALYTICS_DATASET"],
@@ -73,11 +77,29 @@ def counts(bq, end):
     return query(bq, sql, start=end - WINDOW, end=end)
 
 
+def counts(bq, flags, end):
+    source = os.environ.get("SIGNAL_SOURCE", "crashlytics")
+    if source == "crashlytics":
+        return counts_bigquery(bq, end)
+    if source == "sentry":
+        return source_sentry.counts(flags, end - WINDOW, end)
+    raise ValueError(f"unknown SIGNAL_SOURCE {source!r}")
+
+
+def kill(flag):
+    tool = os.environ.get("FLAG_TOOL", "firebase")
+    if tool == "firebase":
+        return kill_remote_config(flag)
+    if tool == "statsig":
+        return kill_statsig.kill(flag)
+    raise ValueError(f"unknown FLAG_TOOL {tool!r}")
+
+
 def thresholds():
     return {k: type(v)(os.environ[k.upper()]) for k, v in detect.DEFAULTS.items() if k.upper() in os.environ}
 
 
-def kill(flag):
+def kill_remote_config(flag):
     """Set killswitch_<flag>=true in Remote Config. ETag guards against clobbering a concurrent edit."""
     creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/firebase.remoteconfig"])
     s = AuthorizedSession(creds)
@@ -95,11 +117,13 @@ def kill(flag):
 
 
 def slack(f, action):
+    where = {"firebase": "Remote Config", "statsig": "Statsig"}.get(os.environ.get("FLAG_TOOL", "firebase"))
+    switch = f"`killswitch_{f.flag}`"
     next_step = {
-        "killed": f"Undo: set `killswitch_{f.flag}` to false in Remote Config.",
+        "killed": f"Undo: turn {switch} off in {where}.",
         "already_killed": "Kill switch was already on.",
-        "kill_capped": f"Daily auto-kill cap reached. Set `killswitch_{f.flag}` to true by hand if needed.",
-        "alerted": f"Alert only. To stop it, set `killswitch_{f.flag}` to true in Remote Config.",
+        "kill_capped": f"Daily auto-kill cap reached. Turn {switch} on in {where} by hand if needed.",
+        "alerted": f"Alert only. To stop it, turn {switch} on in {where}.",
     }[action]
     what = {"FATAL": "crash", "ANR": "ANR", "NON_FATAL": "non-fatal error"}[f.signal]
     text = (
@@ -119,7 +143,7 @@ def audit(bq, f, action, now):
 
 
 def run(bq, flags, now):
-    findings = detect.detect(counts(bq, now), flags, **thresholds())
+    findings = detect.detect(counts(bq, flags, now), flags, **thresholds())
     if not findings:
         return
     recent = query(
@@ -154,7 +178,7 @@ def main():
     if args.dry_run or args.backtest:
         for i in range(args.backtest or 1):
             end = now - i * WINDOW
-            for f in detect.detect(counts(bq, end), flags, **thresholds()):
+            for f in detect.detect(counts(bq, flags, end), flags, **thresholds()):
                 print(end.date(), f)
         return
     run(bq, flags, now)
