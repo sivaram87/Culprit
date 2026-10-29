@@ -4,6 +4,8 @@
 
 Your crash tool shows that crashes, ANRs or non-fatal errors went up. Culprit shows *why*: "variant `on` of `new_checkout` crashes 6× more than control on v5.2". It posts that to Slack and, if you've allowed it, turns the variant off with a kill switch, all within about 15 minutes and without anyone being woken up to compare dashboards.
 
+**Website:** https://sivaram87.github.io/Culprit/ has an interactive detector demo and a setup guide for your stack.
+
 Works with **Crashlytics or Sentry** for crash data, and **Firebase Remote Config or Statsig** for flags, in any combination.
 
 ```

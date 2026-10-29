@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Culprit</title>
+<meta name="description" content="Culprit finds the feature-flag variant behind a mobile crash, ANR or error spike, and switches it off automatically. Works with Crashlytics or Sentry, and Firebase Remote Config or Statsig.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%23d23b3b' stroke-width='3'/><path d='M19 19l8 8' stroke='%23d23b3b' stroke-width='3' stroke-linecap='round'/></svg>">
+<style>
+:root {
+  --bg: #fbfaf8; --surface: #ffffff; --surface-2: #f3f1ed; --text: #1c1b19; --muted: #615d56;
+  --border: #e4e0d8; --accent: #c93434; --accent-soft: #fbe9e7; --ok: #1e7d4f; --ok-soft: #e3f3ea;
+  --warn: #9a6200; --code-bg: #1e1d1b; --code-text: #f1efe9; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.05);
+  --radius: 12px; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131211; --surface: #1c1b19; --surface-2: #252320; --text: #efece6; --muted: #a59f95;
+    --border: #34312c; --accent: #ef6a5f; --accent-soft: #3a1f1c; --ok: #5cc48f; --ok-soft: #173326;
+    --warn: #e0a64a; --code-bg: #0d0c0b; --code-text: #efece6; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131211; --surface: #1c1b19; --surface-2: #252320; --text: #efece6; --muted: #a59f95;
+  --border: #34312c; --accent: #ef6a5f; --accent-soft: #3a1f1c; --ok: #5cc48f; --ok-soft: #173326;
+  --warn: #e0a64a; --code-bg: #0d0c0b; --code-text: #efece6; --shadow: none;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+header.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+header.top .wrap { display: flex; align-items: center; gap: 20px; height: 56px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--text); text-decoration: none; font-size: 18px; }
+nav.links { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
+nav.links a { color: var(--muted); text-decoration: none; }
+nav.links a:hover { color: var(--text); }
+.theme-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 14px; }
+@media (max-width: 720px) { nav.links { display: none; } .theme-btn { margin-left: auto; } }
+
+section { padding: 72px 0; border-bottom: 1px solid var(--border); }
+h1 { font-size: clamp(34px, 5.5vw, 56px); line-height: 1.08; margin: 0 0 18px; letter-spacing: -0.02em; }
+h2 { font-size: clamp(26px, 3.6vw, 36px); line-height: 1.15; margin: 0 0 10px; letter-spacing: -0.01em; }
+h3 { font-size: 18px; margin: 0 0 6px; }
+.lede { font-size: 19px; color: var(--muted); max-width: 640px; }
+.eyebrow { font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+.section-intro { color: var(--muted); max-width: 680px; margin: 0 0 36px; }
+
+.hero { padding: 80px 0 64px; }
+.hero-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 48px; align-items: center; }
+@media (max-width: 860px) { .hero-grid { grid-template-columns: 1fr; gap: 32px; } }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 10px; font-weight: 600; text-decoration: none; font-size: 15px; border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 22px; }
+.pill { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+
+.slack { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; font-size: 14.5px; }
+.slack-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.slack-avatar { width: 36px; height: 36px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: #fff; font-weight: 700; flex: none; }
+.slack-name { font-weight: 700; }
+.slack-time { color: var(--muted); font-size: 12px; }
+.slack-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.slack-body code { font-family: var(--mono); font-size: 13px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--accent); }
+.slack-caption { margin-top: 10px; color: var(--muted); font-size: 13px; }
+
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+@media (max-width: 860px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .grid3, .grid2 { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.card .icon { font-size: 22px; margin-bottom: 8px; }
+
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 40px; }
+@media (max-width: 700px) { .compare { grid-template-columns: 1fr; } }
+.compare ol { margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: 15px; }
+.compare .card.after { border-color: var(--accent); }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); color: var(--muted); margin-bottom: 8px; }
+.card.after .tag { background: var(--accent-soft); color: var(--accent); }
+
+.flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: step; }
+@media (max-width: 760px) { .flow { grid-template-columns: 1fr; } }
+.flow .card { position: relative; padding-top: 44px; }
+.flow .card::before { counter-increment: step; content: counter(step); position: absolute; top: 14px; left: 20px; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; display: grid; place-items: center; }
+
+/* Simulator */
+.sim { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+@media (max-width: 860px) { .sim { grid-template-columns: 1fr; } }
+.presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.presets button { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.presets button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.groups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 420px) { .groups { grid-template-columns: 1fr; } }
+fieldset { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 0; min-width: 0; }
+legend { font-weight: 600; font-size: 14px; padding: 0 4px; }
+label.field { display: block; font-size: 13px; color: var(--muted); margin-top: 8px; }
+label.field:first-of-type { margin-top: 0; }
+input[type="number"], select { width: 100%; margin-top: 4px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 15px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+@media (max-width: 420px) { .row { grid-template-columns: 1fr; } }
+.toggles { margin-top: 12px; display: grid; gap: 8px; font-size: 14px; }
+.toggles label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.rate-bars { margin-top: 4px; display: grid; gap: 10px; }
+.bar-label { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+.bar { height: 10px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+.bar > span { display: block; height: 100%; border-radius: 6px; transition: width .25s; }
+.verdict { border-radius: 10px; padding: 12px 14px; font-weight: 600; margin: 14px 0; }
+.verdict.flag { background: var(--accent-soft); color: var(--accent); }
+.verdict.pass { background: var(--ok-soft); color: var(--ok); }
+ul.checks { list-style: none; padding: 0; margin: 0 0 14px; display: grid; gap: 6px; font-size: 14px; }
+ul.checks li { display: flex; gap: 8px; align-items: baseline; }
+ul.checks .mark { width: 18px; flex: none; font-weight: 700; }
+ul.checks .ok { color: var(--ok); } ul.checks .no { color: var(--accent); }
+.sim-note { font-size: 13px; color: var(--muted); margin-top: 12px; }
+
+/* Setup guide */
+.picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+@media (max-width: 760px) { .picker { grid-template-columns: 1fr; } }
+.seg { display: flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.seg label { flex: 1; text-align: center; padding: 9px 6px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--muted); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label:has(input:checked) { background: var(--accent); color: #fff; }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.picker .cap { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+ol.steps { list-style: none; padding: 0; margin: 0; counter-reset: s; display: grid; gap: 14px; }
+ol.steps > li { counter-increment: s; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 18px 18px 60px; position: relative; min-width: 0; }
+ol.steps > li::before { content: counter(s); position: absolute; left: 18px; top: 18px; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); font-weight: 700; display: grid; place-items: center; font-size: 14px; }
+@media (max-width: 520px) { ol.steps > li { padding-left: 18px; padding-top: 56px; } }
+ol.steps p, ol.steps ul { color: var(--muted); font-size: 15px; margin: 6px 0; }
+ol.steps ul { padding-left: 20px; }
+.code { position: relative; margin: 10px 0 4px; }
+.code pre { margin: 0; background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font: 13px/1.55 var(--mono); }
+.code .copy { position: absolute; top: 0; right: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 9px; font-size: 12px; cursor: pointer; }
+.code .lang { font-size: 12px; color: var(--muted); margin-bottom: 6px; font-family: var(--mono); min-height: 24px; line-height: 24px; }
+code.inline { font-family: var(--mono); font-size: 13.5px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--text); }
+
+table.simple { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+table.simple th, table.simple td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.simple th { font-size: 13px; color: var(--muted); font-weight: 600; }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+
+details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+details + details { margin-top: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+details p { color: var(--muted); margin: 8px 0 0; font-size: 15px; }
+.note { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 14px; color: var(--muted); }
+footer { padding: 40px 0 56px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Culprit home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><circle cx="13" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="3" style="color:var(--accent)"/><path d="M19 19l8 8" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/></svg>
+      Culprit
+    </a>
+    <nav class="links" aria-label="Sections">
+      <a href="#why">Why</a><a href="#how">How it works</a><a href="#try">Try it</a><a href="#setup">Setup</a><a href="#safety">Safety</a><a href="https://github.com/sivaram87/Culprit">GitHub</a>
+    </nav>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle dark mode">◐ Theme</button>
+  </div>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow">For mobile teams shipping behind feature flags</div>
+      <h1>Know which flag broke your app, before anyone is paged.</h1>
+      <p class="lede">Culprit compares crash, ANR and error rates for every feature-flag variant against its control group. When one is clearly worse, it tells your team in Slack exactly which variant, on which app version, and where. If you allow it, it also switches that variant off.</p>
+      <div class="cta">
+        <a class="btn primary" href="#setup">Set it up for your stack →</a>
+        <a class="btn" href="#try">Try the detector</a>
+        <a class="btn" href="https://github.com/sivaram87/Culprit">View on GitHub</a>
+      </div>
+      <div class="pills" aria-label="Supported tools">
+        <span class="pill">Crashlytics</span><span class="pill">Sentry</span><span class="pill">Firebase Remote Config</span><span class="pill">Statsig</span><span class="pill">iOS + Android</span><span class="pill">Open source</span>
+      </div>
+    </div>
+    <div>
+      <div class="slack" aria-label="Example Slack alert">
+        <div class="slack-head"><div class="slack-avatar" aria-hidden="true">C</div><div><div class="slack-name">Culprit</div><div class="slack-time">APP · 03:12</div></div></div>
+        <div class="slack-body">🚨 <b>new_checkout=on</b> on v5.2: crash rate 1.20% vs control 0.20% (120/10000 users, p=1.1e-17). Action: <b>killed</b>. Undo: turn <code>killswitch_new_checkout</code> off in Statsig.
+Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% control).</div>
+      </div>
+      <p class="slack-caption">A real alert format. Nobody had to open a dashboard to find the cause.</p>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <div class="eyebrow">Why</div>
+    <h2>Mobile releases can't be rolled back. Flags can.</h2>
+    <p class="section-intro">Once a build is in the store, a feature flag is the fastest lever you have. But crash tools tell you <em>that</em> crashes went up, not <em>which</em> of your dozen running flags and experiments caused it. Culprit takes over that investigation.</p>
+    <div class="compare">
+      <div class="card">
+        <span class="tag">Today, at 3am</span>
+        <h3>Someone pieces it together by hand</h3>
+        <ol>
+          <li>Crash-free rate alert fires</li>
+          <li>Open the crash tool, then the flag tool, then Slack history</li>
+          <li>Guess which rollout overlaps the spike</li>
+          <li>Check whether it's one app version or all</li>
+          <li>Find the person who can flip the flag</li>
+        </ol>
+      </div>
+      <div class="card after">
+        <span class="tag">With Culprit, ~15 minutes, no one paged</span>
+        <h3>The answer arrives in Slack</h3>
+        <ol>
+          <li>Every variant is compared with control, per app version</li>
+          <li>The alert names the flag, variant, version and signal</li>
+          <li>It shows where the errors concentrate (OS, device)</li>
+          <li>Opted-in flags are switched to control automatically</li>
+          <li>Every alert and kill is logged for the dashboard</li>
+        </ol>
+      </div>
+    </div>
+    <div class="grid3">
+      <div class="card"><div class="icon" aria-hidden="true">🎯</div><h3>Names the cause</h3><p>Not "crashes are up". It reports "<code class="inline">new_checkout=on</code> on v5.2 crashes 6× more than control".</p></div>
+      <div class="card"><div class="icon" aria-hidden="true">🧊</div><h3>Crashes, ANRs and errors</h3><p>Each signal is checked on its own, so a variant that freezes the app is caught even when crashes are flat.</p></div>
+      <div class="card"><div class="icon" aria-hidden="true">🧮</div><h3>Few false alarms</h3><p>Minimum sample sizes, a 2× ratio, and a significance test corrected for the number of flags checked.</p></div>
+      <div class="card"><div class="icon" aria-hidden="true">🛑</div><h3>Safe auto-kill</h3><p>Alert-only by default. Kills are opt-in per flag, only ever send users to control, and are capped at one a day.</p></div>
+      <div class="card"><div class="icon" aria-hidden="true">🔌</div><h3>Fits your stack</h3><p>Crashlytics or Sentry for crash data, and Firebase Remote Config or Statsig for flags, in any combination.</p></div>
+      <div class="card"><div class="icon" aria-hidden="true">📊</div><h3>History you can see</h3><p>Every finding goes to BigQuery, with a ready-made Grafana dashboard or a one-click Looker Studio report.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="eyebrow">How it works</div>
+    <h2>Three parts, no new servers to run</h2>
+    <p class="section-intro">A small wrapper in the app, a scheduled job on Google Cloud, and a kill switch per watched flag.</p>
+    <div class="flow">
+      <div class="card"><h3>Tag</h3><p>The app reads watched flags through a ~30-line <code class="inline">Flags</code> wrapper. It tags every crash and session with <code class="inline">ff_&lt;flag&gt;=&lt;variant&gt;</code> and checks <code class="inline">killswitch_&lt;flag&gt;</code> first.</p></div>
+      <div class="card"><h3>Compare</h3><p>Every 15 minutes a Cloud Run job counts affected users and active users over the last 24 hours, per flag, variant, app version and signal, and compares each variant with control.</p></div>
+      <div class="card"><h3>Act</h3><p>A clear regression gets a Slack alert with its OS and device breakdown. For opted-in flags, the job also turns the kill switch on, and the app serves control on its next fetch.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="try">
+  <div class="wrap">
+    <div class="eyebrow">Try it</div>
+    <h2>Run the detector yourself</h2>
+    <p class="section-intro">Below are the same rules and statistics the real job uses. Change the numbers to see when Culprit raises an alert, and what it would post.</p>
+    <div class="sim">
+      <div class="card">
+        <div class="presets" role="group" aria-label="Scenarios">
+          <button type="button" data-preset="regression">Clear regression</button>
+          <button type="button" data-preset="noise">Small, noisy sample</button>
+          <button type="button" data-preset="anr">ANR, zero in control</button>
+          <button type="button" data-preset="marginal">Marginal, 20 flags</button>
+        </div>
+        <div class="groups">
+          <fieldset><legend>Control (<code class="inline">off</code>)</legend>
+            <label class="field">Active users<input type="number" id="users0" min="0" step="1"></label>
+            <label class="field">Affected users<input type="number" id="crashes0" min="0" step="1"></label>
+          </fieldset>
+          <fieldset><legend>Variant (<code class="inline">on</code>)</legend>
+            <label class="field">Active users<input type="number" id="users1" min="0" step="1"></label>
+            <label class="field">Affected users<input type="number" id="crashes1" min="0" step="1"></label>
+          </fieldset>
+        </div>
+        <div class="row">
+          <label class="field">Signal
+            <select id="signal"><option value="FATAL">Crash (FATAL)</option><option value="ANR">ANR</option><option value="NON_FATAL">Non-fatal error</option></select>
+          </label>
+          <label class="field">Flags watched (× 3 signals = comparisons)<input type="number" id="flags" min="1" max="100" step="1"></label>
+        </div>
+        <div class="toggles">
+          <label><input type="checkbox" id="autokill"> Auto-kill turned on for this flag</label>
+          <label><input type="checkbox" id="capped"> Already used today's auto-kill</label>
+        </div>
+      </div>
+      <div class="card" aria-live="polite">
+        <div class="rate-bars">
+          <div><div class="bar-label"><span>Control rate</span><span id="baseTxt"></span></div><div class="bar"><span id="baseBar" style="background:var(--muted)"></span></div></div>
+          <div><div class="bar-label"><span>Variant rate</span><span id="rateTxt"></span></div><div class="bar"><span id="rateBar" style="background:var(--accent)"></span></div></div>
+        </div>
+        <div class="verdict" id="verdict"></div>
+        <ul class="checks" id="checks"></ul>
+        <div class="slack" id="slackPreview" hidden>
+          <div class="slack-head"><div class="slack-avatar" aria-hidden="true">C</div><div><div class="slack-name">Culprit</div><div class="slack-time">Preview</div></div></div>
+          <div class="slack-body" id="slackText"></div>
+        </div>
+        <p class="sim-note">The p-value is from a one-sided two-proportion z-test. With N flags watched, the job makes 3 × N comparisons per app version, and each must beat 0.001 ÷ comparisons (Bonferroni correction).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="setup">
+  <div class="wrap">
+    <div class="eyebrow">Setup</div>
+    <h2>Add Culprit to your project</h2>
+    <p class="section-intro">Pick your tools and platform. Every step and snippet below updates to match.</p>
+    <div class="picker">
+      <div><div class="cap" id="capSource">Crash data</div>
+        <div class="seg" role="radiogroup" aria-labelledby="capSource">
+          <label><input type="radio" name="source" value="crashlytics" checked>Crashlytics</label>
+          <label><input type="radio" name="source" value="sentry">Sentry</label>
+        </div></div>
+      <div><div class="cap" id="capTool">Feature flags</div>
+        <div class="seg" role="radiogroup" aria-labelledby="capTool">
+          <label><input type="radio" name="tool" value="firebase" checked>Remote Config</label>
+          <label><input type="radio" name="tool" value="statsig">Statsig</label>
+        </div></div>
+      <div><div class="cap" id="capPlat">App platform</div>
+        <div class="seg" role="radiogroup" aria-labelledby="capPlat">
+          <label><input type="radio" name="platform" value="ios" checked>iOS</label>
+          <label><input type="radio" name="platform" value="android">Android</label>
+        </div></div>
+    </div>
+    <ol class="steps" id="steps"></ol>
+    <p class="note" style="margin-top:20px">Culprit is an early-stage open-source project. Its logic is covered by offline tests, so run it in a staging project and use <code class="inline">--backtest</code> before turning on auto-kill in production.</p>
+  </div>
+</section>
+
+<section id="safety">
+  <div class="wrap">
+    <div class="eyebrow">Safety</div>
+    <h2>An automatic kill switch you can trust</h2>
+    <p class="section-intro">A tool that can turn features off needs strict limits. These are built in, not optional.</p>
+    <div class="grid2">
+      <div class="card"><h3>Off by default</h3><p>A new install only sends alerts. Auto-kill needs two opt-ins: <code class="inline">"auto_kill": true</code> for the flag in a reviewed PR, and <code class="inline">AUTO_KILL=1</code> on the job.</p></div>
+      <div class="card"><h3>Only ever toward safety</h3><p>The job can only turn <code class="inline">killswitch_&lt;flag&gt;</code> <em>on</em>, which sends users to the control path. Code checks refuse any other change, and tests cover them.</p></div>
+      <div class="card"><h3>Hard to trigger by accident or abuse</h3><p>Non-fatal errors never kill. Kills need at least 10 affected installs plus a significant result, and are capped at one a day.</p></div>
+      <div class="card"><h3>Least privilege</h3><p>Read-only access to crash data. Secrets live in Secret Manager. No service-account key files. The dashboards use read-only access.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <div class="eyebrow">FAQ</div>
+    <h2>Questions teams ask</h2>
+    <details><summary>Does it replace Crashlytics or Sentry?</summary><p>No. It reads from them. Your crash tool still collects and groups crashes; Culprit adds the "which flag variant caused it" answer and the kill switch.</p></details>
+    <details><summary>What does "active users" mean with Sentry?</summary><p>Sentry can't break its session counts down by custom tags, so Culprit counts distinct users on app-start traces, which carry the same flag tags. That means sampling app-start traces at 100%.</p></details>
+    <details><summary>What happens if the breakdown query fails?</summary><p>The alert still goes out, with "Breakdown unavailable". The OS and device breakdown is extra context, and it never delays a kill or blocks an alert.</p></details>
+    <details><summary>How do I undo a kill?</summary><p>Turn <code class="inline">killswitch_&lt;flag&gt;</code> back off in Remote Config or Statsig. Both keep a change history. Find the cause first: the detector will alert again if the rate climbs back.</p></details>
+    <details><summary>Where does it run, and what does it need?</summary><p>A Cloud Run job triggered every 15 minutes by Cloud Scheduler, with a BigQuery table for the audit log. One <code class="inline">deploy.sh</code> sets everything up.</p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Culprit · open source on <a href="https://github.com/sivaram87/Culprit">GitHub</a></span>
+    <span><a href="https://github.com/sivaram87/Culprit#readme">Full documentation</a></span>
+  </div>
+</footer>
+
+<script src="detect.js"></script>
+<script>
+(function () {
+  const D = window.CulpritDetect;
+  const $ = (id) => document.getElementById(id);
+
+  // ---------- Theme ----------
+  const root = document.documentElement;
+  try { const t = localStorage.getItem("culprit-theme"); if (t) root.dataset.theme = t; } catch (e) {}
+  $("themeBtn").addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("culprit-theme", root.dataset.theme); } catch (e) {}
+  });
+
+  // ---------- Simulator ----------
+  const PRESETS = {
+    regression: { users0: 10000, crashes0: 20, users1: 10000, crashes1: 120, signal: "FATAL", flags: 10, autokill: true, capped: false },
+    noise:      { users0: 100, crashes0: 0, users1: 100, crashes1: 30, signal: "FATAL", flags: 10, autokill: true, capped: false },
+    anr:        { users0: 10000, crashes0: 0, users1: 10000, crashes1: 80, signal: "ANR", flags: 10, autokill: false, capped: false },
+    marginal:   { users0: 10000, crashes0: 15, users1: 10000, crashes1: 40, signal: "FATAL", flags: 20, autokill: true, capped: false },
+  };
+  const ids = ["users0", "crashes0", "users1", "crashes1", "signal", "flags", "autokill", "capped"];
+  const pct = (x) => (x * 100).toFixed(2) + "%";
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  function apply(name) {
+    const p = PRESETS[name];
+    ids.forEach((k) => { const el = $(k); el.type === "checkbox" ? (el.checked = p[k]) : (el.value = p[k]); });
+    document.querySelectorAll("[data-preset]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.preset === name)));
+    update();
+  }
+
+  function num(id) { const v = Math.floor(+$(id).value); return Number.isFinite(v) && v > 0 ? v : 0; }
+
+  function update() {
+    const signal = $("signal").value;
+    const comparisons = Math.max(1, num("flags")) * 3;
+    const r = D.evaluate({ users1: num("users1"), crashes1: num("crashes1"), users0: num("users0"), crashes0: num("crashes0"), comparisons });
+    const max = Math.max(r.rate, r.base, 1e-9);
+    $("rateTxt").textContent = pct(r.rate); $("baseTxt").textContent = pct(r.base);
+    $("rateBar").style.width = (r.rate / max) * 100 + "%"; $("baseBar").style.width = (r.base / max) * 100 + "%";
+
+    $("checks").innerHTML = r.checks.map((c) =>
+      `<li><span class="mark ${c.ok ? "ok" : "no"}" aria-hidden="true">${c.ok ? "✓" : "✗"}</span><span><span class="sr-only">${c.ok ? "Passed:" : "Failed:"}</span>${esc(c.label)}</span></li>`
+    ).join("") + `<li><span class="mark" aria-hidden="true">·</span><span>p = ${D.fmtExp(r.p)}</span></li>`;
+
+    const v = $("verdict");
+    $("slackPreview").hidden = !r.flagged;
+    if (!r.flagged) {
+      const failed = r.checks.filter((c) => !c.ok).length;
+      v.className = "verdict pass";
+      v.textContent = `No alert: ${failed} of 4 checks not met. Culprit stays quiet.`;
+      return;
+    }
+    const action = D.actionFor(signal, $("autokill").checked, $("capped").checked ? 1 : 0);
+    v.className = "verdict flag";
+    v.textContent = { killed: "Alert + kill: variant switched to control.", alerted: "Alert sent. No automatic kill.", kill_capped: "Alert sent. Daily kill cap reached, so no kill." }[action];
+
+    const what = { FATAL: "crash", ANR: "ANR", NON_FATAL: "non-fatal error" }[signal];
+    const sw = "<code>killswitch_new_checkout</code>";
+    const next = {
+      killed: `Undo: turn ${sw} off in Remote Config.`,
+      alerted: `Alert only. To stop it, turn ${sw} on in Remote Config.`,
+      kill_capped: `Daily auto-kill cap reached. Turn ${sw} on in Remote Config by hand if needed.`,
+    }[action];
+    const c1 = Math.min(num("crashes1"), num("users1"));
+    $("slackText").innerHTML = `🚨 <b>new_checkout=on</b> on v5.2: ${what} rate ${pct(r.rate)} vs control ${pct(r.base)} ` +
+      `(${c1}/${num("users1")} users, p=${D.fmtExp(r.p)}). Action: <b>${action}</b>. ${next}` +
+      (action !== "killed" && signal === "NON_FATAL" ? "\n(Non-fatal errors never trigger an automatic kill.)" : "");
+  }
+
+  document.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => apply(b.dataset.preset)));
+  ids.forEach((k) => $(k).addEventListener("input", () => {
+    document.querySelectorAll("[data-preset]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+    update();
+  }));
+  apply("regression");
+
+  // ---------- Setup guide ----------
+  const S = {
+    value: {
+      firebase: {
+        ios: String.raw`Flags.value = { RemoteConfig.remoteConfig()[$0].stringValue }
+Flags.isKilled = { RemoteConfig.remoteConfig()["killswitch_\($0)"].boolValue }`,
+        android: String.raw`Flags.value = { Firebase.remoteConfig.getString(it) }
+Flags.isKilled = { Firebase.remoteConfig.getBoolean("killswitch_$it") }`,
+      },
+      statsig: {
+        ios: String.raw`// Feature gates. For experiments, return the group name instead.
+Flags.value = { Statsig.checkGate($0) ? "on" : "off" }
+Flags.isKilled = { Statsig.checkGate("killswitch_\($0)") }`,
+        android: String.raw`// Feature gates. For experiments, return the group name instead.
+Flags.value = { if (Statsig.checkGate(it)) "on" else "off" }
+Flags.isKilled = { Statsig.checkGate("killswitch_$it") }`,
+      },
+    },
+    sinks: {
+      crashlytics: {
+        ios: String.raw`Flags.tagSinks = [{ key, value in
+    Crashlytics.crashlytics().setCustomValue(value, forKey: key)
+    Analytics.setUserProperty(value, forName: key)
+}]`,
+        android: String.raw`Flags.tagSinks = listOf { key, value ->
+    Firebase.crashlytics.setCustomKey(key, value)
+    Firebase.analytics.setUserProperty(key, value)
+}`,
+      },
+      sentry: {
+        ios: String.raw`Flags.tagSinks = [{ key, value in
+    SentrySDK.configureScope { $0.setTag(value: value, key: key) }
+}]`,
+        android: String.raw`Flags.tagSinks = listOf { key, value -> Sentry.setTag(key, value) }`,
+      },
+    },
+    tag: {
+      firebase: {
+        ios: String.raw`Flags.tag()  // at launch, with cached values
+RemoteConfig.remoteConfig().fetchAndActivate { status, _ in
+    if status != .error { Flags.tag() }
+}`,
+        android: String.raw`Flags.tag()  // at launch, with cached values
+Firebase.remoteConfig.fetchAndActivate().addOnSuccessListener { Flags.tag() }`,
+      },
+      statsig: {
+        ios: String.raw`Flags.tag()  // at launch, with cached values
+// ...and again whenever Statsig finishes initializing or updates the user:
+Flags.tag()`,
+        android: String.raw`Flags.tag()  // at launch, with cached values
+// ...and again whenever Statsig finishes initializing or updates the user:
+Flags.tag()`,
+      },
+    },
+    use: {
+      ios: String.raw`// Flags.swift: watched flags and their control (safe) value
+static let watched: [String: String] = ["new_checkout": "off"]
+
+// Anywhere in the app
+if Flags.variant("new_checkout") == "on" { showNewCheckout() }`,
+      android: String.raw`// Flags.kt: watched flags and their control (safe) value
+val watched = mapOf("new_checkout" to "off")
+
+// Anywhere in the app
+if (Flags.variant("new_checkout") == "on") showNewCheckout()`,
+    },
+  };
+
+  function code(lang, text) {
+    return `<div class="code"><div class="lang">${lang}</div><pre><code>${esc(text)}</code></pre><button class="copy" type="button">Copy</button></div>`;
+  }
+
+  function steps(source, tool, platform) {
+    const lang = platform === "ios" ? "Swift" : "Kotlin";
+    const file = platform === "ios" ? "client/ios/Flags.swift" : "client/android/Flags.kt";
+    const sourceStep = source === "crashlytics"
+      ? `<h3>Turn on BigQuery export for Crashlytics and Analytics</h3>
+         <p>In the Firebase console, open <b>Project settings → Integrations → BigQuery</b>, then enable <b>Crashlytics</b> and <b>Google Analytics</b>, both with streaming export on. That creates <code class="inline">firebase_crashlytics.&lt;app&gt;_REALTIME</code> and <code class="inline">analytics_&lt;id&gt;.events_intraday_*</code>.</p>`
+      : `<h3>Sample Sentry app-start traces at 100% and create a read-only token</h3>
+         <p>Culprit counts active users from app-start traces, because Sentry can't split session counts by tag. Set <code class="inline">tracesSampleRate = 1.0</code>, or use a <code class="inline">tracesSampler</code> that returns 1.0 for the first screen load (op <code class="inline">ui.load</code>).</p>
+         <p>Then create an auth token with <b>only</b> <code class="inline">org:read</code> and <code class="inline">event:read</code>, and note your organization slug and numeric project ID.</p>`;
+    const killStep = tool === "firebase"
+      ? `<h3>Create a kill-switch parameter per watched flag</h3>
+         <p>In Remote Config, add <code class="inline">killswitch_new_checkout</code>, type Boolean, default <code class="inline">false</code>. Keep it outside parameter groups. If it's missing, the job adds it on the first kill.</p>`
+      : `<h3>Create a kill-switch gate per watched flag</h3>
+         <p>In Statsig, create the gate <code class="inline">killswitch_new_checkout</code> with one rule, <b>Everyone, 100% pass</b>, then <b>disable</b> it. A disabled gate returns false. When Culprit enables it, everyone gets control.</p>`;
+    const env = [];
+    if (source === "crashlytics") env.push("export CRASHLYTICS_TABLE=my-proj.firebase_crashlytics.com_example_app_ANDROID", "export ANALYTICS_DATASET=my-proj.analytics_123456");
+    else env.push("export SIGNAL_SOURCE=sentry SENTRY_ORG=acme SENTRY_PROJECT_ID=42 SENTRY_AUTH_TOKEN=...");
+    const backtest = ["cd job", "pip install -r requirements.txt", "gcloud auth application-default login", "export GCP_PROJECT=my-proj", ...env, "python main.py --backtest 30"].join("\n");
+    const deploy = ["cd job", "PROJECT=my-proj \\"];
+    if (source === "sentry") deploy.push("SIGNAL_SOURCE=sentry SENTRY_ORG=acme SENTRY_PROJECT_ID=42 SENTRY_AUTH_TOKEN=... \\");
+    else deploy.push("CRASHLYTICS_TABLE=my-proj.firebase_crashlytics.com_example_app_ANDROID_REALTIME \\", "ANALYTICS_DATASET=analytics_123456 \\");
+    if (tool === "statsig") deploy.push("FLAG_TOOL=statsig STATSIG_CONSOLE_KEY=... \\");
+    deploy.push("SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \\", "./deploy.sh");
+
+    return [
+      sourceStep,
+      `<h3>Add the <code class="inline">Flags</code> wrapper to your app</h3>
+       <p>Copy <code class="inline">${file}</code> from the repo. It has no vendor imports. Connect it to your tools once at startup:</p>
+       ${code(lang, S.value[tool][platform])}${code(lang, S.sinks[source][platform])}
+       <p>List the watched flags with their control value, and read them only through the wrapper:</p>
+       ${code(lang, S.use[platform])}
+       <p>Tag as early as possible, and again after every flag refresh${source === "sentry" ? " (Sentry only counts a user for a variant if the tag is set before the app-start trace finishes)" : ""}:</p>
+       ${code(lang, S.tag[tool][platform])}
+       <ul><li>Flag names: lowercase letters, digits and <code class="inline">_</code>, at most 21 characters.</li>${source === "crashlytics" ? "<li>Watch about 10 flags at most: Analytics allows 25 user properties.</li>" : ""}</ul>`,
+      killStep,
+      `<h3>List the watched flags for the job</h3>
+       <p><code class="inline">job/flags.json</code> must match the app's list. Changes to it go through code review, which is the approval step for auto-kill.</p>
+       ${code("JSON", `{\n  "new_checkout": {"control": "off", "auto_kill": false}\n}`)}`,
+      `<h3>Backtest on your real data</h3>
+       <p>See what Culprit would have flagged over the last 30 days. This doesn't post to Slack, write anything or touch a kill switch. Every line should match an incident you remember.</p>
+       ${code("Shell", backtest)}`,
+      `<h3>Deploy</h3>
+       <p>One script creates the service account, audit table, dashboard views, secrets, Cloud Run job and 15-minute schedule. It deploys in <b>alert-only</b> mode and is safe to re-run.</p>
+       ${code("Shell", deploy.join("\n"))}`,
+      `<h3>Turn on auto-kill when you trust it</h3>
+       <p>After about two weeks of alerts with no false alarms, set <code class="inline">"auto_kill": true</code> for <b>one</b> flag, then redeploy with <code class="inline">AUTO_KILL=1</code>. Only crashes and ANRs can trigger a kill.</p>`,
+    ].map((h) => `<li>${h}</li>`).join("");
+  }
+
+  function renderSteps() {
+    const pick = (n) => document.querySelector(`input[name="${n}"]:checked`).value;
+    $("steps").innerHTML = steps(pick("source"), pick("tool"), pick("platform"));
+  }
+  document.querySelectorAll('.picker input').forEach((i) => i.addEventListener("change", renderSteps));
+  renderSteps();
+
+  // ---------- Copy buttons ----------
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".copy");
+    if (!btn) return;
+    const text = btn.parentElement.querySelector("pre").innerText;
+    try { await navigator.clipboard.writeText(text); btn.textContent = "Copied"; }
+    catch (err) { btn.textContent = "Select & copy"; }
+    setTimeout(() => (btn.textContent = "Copy"), 1500);
+  });
+})();
+</script>
+</body>
+</html>
