@@ -46,6 +46,8 @@ Every finding is also logged to BigQuery, and a [Looker Studio or Grafana dashbo
 - [Security](#security)
 - [Limitations](#limitations)
 - [Roadmap](#roadmap)
+- [Author](#author)
+- [License](#license)
 
 ---
 
@@ -649,3 +651,7 @@ These will be added when there's a need:
 ## Author
 
 Created by [Sivaram Jebamani](https://github.com/sivaram87).
+
+## License
+
+[MIT](LICENSE) © 2026 Sivaram Jebamani
