@@ -229,7 +229,7 @@ Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% 
     <div class="grid3">
       <div class="card"><div class="icon" aria-hidden="true">🎯</div><h3>Names the cause</h3><p>Not "crashes are up". It reports "<code class="inline">new_checkout=on</code> on v5.2 crashes 6× more than control".</p></div>
       <div class="card"><div class="icon" aria-hidden="true">🧊</div><h3>Crashes, ANRs and errors</h3><p>Each signal is checked on its own, so a variant that freezes the app is caught even when crashes are flat.</p></div>
-      <div class="card"><div class="icon" aria-hidden="true">🧮</div><h3>Few false alarms</h3><p>Minimum sample sizes, a 2× ratio, and a significance test corrected for the number of flags checked.</p></div>
+      <div class="card"><div class="icon" aria-hidden="true">🧮</div><h3>Few false alarms</h3><p>Minimum sample sizes, a 2× ratio, and a sequential test that stays valid however often the job checks, corrected for the number of flags.</p></div>
       <div class="card"><div class="icon" aria-hidden="true">🛑</div><h3>Safe auto-kill</h3><p>Alert-only by default. Kills are opt-in per flag, only ever send users to control, and are capped at one a day.</p></div>
       <div class="card"><div class="icon" aria-hidden="true">🔌</div><h3>Fits your stack</h3><p>Crashlytics or Sentry for crash data, and Firebase Remote Config or Statsig for flags, in any combination.</p></div>
       <div class="card"><div class="icon" aria-hidden="true">📊</div><h3>History you can see</h3><p>Every finding goes to BigQuery, with a ready-made Grafana dashboard or a one-click Looker Studio report.</p></div>
@@ -244,7 +244,7 @@ Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% 
     <p class="section-intro">A small wrapper in the app, a scheduled job on Google Cloud, and a kill switch per watched flag.</p>
     <div class="flow">
       <div class="card"><h3>Tag</h3><p>The app reads watched flags through a ~30-line <code class="inline">Flags</code> wrapper. It tags every crash and session with <code class="inline">ff_&lt;flag&gt;=&lt;variant&gt;</code> and checks <code class="inline">killswitch_&lt;flag&gt;</code> first.</p></div>
-      <div class="card"><h3>Compare</h3><p>Every 15 minutes a Cloud Run job counts affected users and active users over the last 24 hours, per flag, variant, app version and signal, and compares each variant with control.</p></div>
+      <div class="card"><h3>Compare</h3><p>Every 15 minutes a Cloud Run job counts affected users and active users over the last 7 days, per flag, variant, app version and signal, and compares each variant with control.</p></div>
       <div class="card"><h3>Act</h3><p>A clear regression gets a Slack alert with its OS and device breakdown. For opted-in flags, the job also turns the kill switch on, and the app serves control on its next fetch.</p></div>
     </div>
   </div>
@@ -295,7 +295,7 @@ Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% 
           <div class="slack-head"><div class="slack-avatar" aria-hidden="true">C</div><div><div class="slack-name">Culprit</div><div class="slack-time">Preview</div></div></div>
           <div class="slack-body" id="slackText"></div>
         </div>
-        <p class="sim-note">The p-value is from a one-sided two-proportion z-test. With N flags watched, the job makes 3 × N comparisons per app version, and each must beat 0.001 ÷ comparisons (Bonferroni correction).</p>
+        <p class="sim-note">The p-value is from a sequential test (mSPRT), which stays valid when the job checks again every 15 minutes as data builds up over 7 days. With N flags watched, the job makes 3 × N comparisons per app version, and each must beat 0.01 ÷ comparisons (Bonferroni correction).</p>
       </div>
     </div>
   </div>
@@ -382,7 +382,7 @@ Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% 
     regression: { users0: 10000, crashes0: 20, users1: 10000, crashes1: 120, signal: "FATAL", flags: 10, autokill: true, capped: false },
     noise:      { users0: 100, crashes0: 0, users1: 100, crashes1: 30, signal: "FATAL", flags: 10, autokill: true, capped: false },
     anr:        { users0: 10000, crashes0: 0, users1: 10000, crashes1: 80, signal: "ANR", flags: 10, autokill: false, capped: false },
-    marginal:   { users0: 10000, crashes0: 15, users1: 10000, crashes1: 40, signal: "FATAL", flags: 20, autokill: true, capped: false },
+    marginal:   { users0: 10000, crashes0: 15, users1: 10000, crashes1: 46, signal: "FATAL", flags: 20, autokill: true, capped: false },
   };
   const ids = ["users0", "crashes0", "users1", "crashes1", "signal", "flags", "autokill", "capped"];
   const pct = (x) => (x * 100).toFixed(2) + "%";

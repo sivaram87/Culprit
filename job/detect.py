@@ -5,9 +5,8 @@ import math
 import re
 from dataclasses import dataclass
 
-# ponytail: fixed thresholds + one-sided z-test. Move to sequential testing
-# (e.g. mSPRT) if false alarms or detection delay become a problem.
-DEFAULTS = dict(min_users=500, min_crashes=10, min_ratio=2.0, alpha=0.001)
+# alpha is "ever, across every run on growing data": mSPRT keeps it valid however often the job looks.
+DEFAULTS = dict(min_users=500, min_crashes=10, min_ratio=2.0, alpha=0.01)
 KILL_PREFIX = "killswitch_"
 SIGNALS = ("FATAL", "NON_FATAL", "ANR")  # Crashlytics error_type values
 # Non-fatals are whatever the app chooses to log: too easy to trip (or spoof) to kill a feature.
@@ -34,6 +33,18 @@ def p_value(c1, n1, c0, n0):
     if se == 0:
         return 1.0
     return 0.5 * math.erfc((c1 / n1 - c0 / n0) / se / math.sqrt(2))
+
+
+def msprt_p(c1, n1, c0, n0, tau2):
+    """Always-valid one-sided p-value (mixture SPRT, normal approximation): safe to check after
+    every run as data grows, unlike p_value(). tau2 = expected squared rate gap under a regression."""
+    pooled = (c1 + c0) / (n1 + n0)
+    v = pooled * (1 - pooled) * (1 / n1 + 1 / n0)
+    d = c1 / n1 - c0 / n0
+    if v == 0 or d <= 0:
+        return 1.0
+    log_lr = 0.5 * math.log(v / (v + tau2)) + tau2 * d * d / (2 * v * (v + tau2))
+    return min(1.0, math.exp(-log_lr))
 
 
 def detect(rows, flags, **thresholds):
@@ -64,7 +75,10 @@ def detect(rows, flags, **thresholds):
         rate, base = c1 / n1, c0 / n0
         if rate < t["min_ratio"] * base:
             continue
-        p = p_value(c1, n1, c0, n0)
+        # ponytail: tau set from this data's pooled rate (a min_ratio-sized gap), not a fixed prior.
+        # Fine for the benchmark; set per signal from history if detection drifts.
+        tau2 = ((c1 + c0) / (n1 + n0) * (t["min_ratio"] - 1)) ** 2
+        p = msprt_p(c1, n1, c0, n0, tau2)
         if p < t["alpha"] / len(pairs):  # Bonferroni across every comparison this run
             findings.append(Finding(flag, variant, version, signal, n1, c1, rate, base, p))
     return findings

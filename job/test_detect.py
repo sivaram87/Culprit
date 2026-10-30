@@ -1,6 +1,7 @@
 """Run: python test_detect.py"""
 from detect import (
-    Finding, action_for, check_only_kill, concentration, describe, detect, is_killed, kill_template, os_major,
+    Finding, action_for, check_only_kill, concentration, describe, detect, is_killed, kill_template, msprt_p,
+    os_major, p_value,
 )
 
 FLAGS = {"checkout": {"control": "off"}}
@@ -41,14 +42,28 @@ def test_unwatched_flag_ignored():
 
 
 def test_bonferroni_suppresses_marginal_result():
-    # 40 vs 15 crashes in 10k users: p ~ 0.0004, passes alone, fails across 20 flags.
-    marginal = [row("off", 10_000, 15), row("on", 10_000, 40)]
+    # 46 vs 15 crashes in 10k users: p ~ 0.002, passes alone (alpha 0.01), fails across 20 flags.
+    marginal = [row("off", 10_000, 15), row("on", 10_000, 46)]
     assert len(detect(marginal, FLAGS)) == 1
     flags = dict(FLAGS)
     for i in range(19):
         flags[f"f{i}"] = {"control": "off"}
         marginal += [row("off", 10_000, 15, flag=f"f{i}"), row("on", 10_000, 15, flag=f"f{i}")]
     assert detect(marginal, flags) == []
+
+
+def test_msprt_never_below_fixed_sample_p():
+    # The price of checking every run: an always-valid p is never smaller than a one-look p.
+    for c1, n1, c0, n0 in [(120, 10_000, 20, 10_000), (46, 10_000, 15, 10_000), (30, 1_500, 3, 1_500), (12, 600, 0, 600)]:
+        tau2 = ((c1 + c0) / (n1 + n0)) ** 2
+        assert msprt_p(c1, n1, c0, n0, tau2) >= p_value(c1, n1, c0, n0)
+
+
+def test_msprt_evidence_grows_with_data():
+    tau2 = 0.004 ** 2
+    small, big = msprt_p(12, 600, 1, 600, tau2), msprt_p(48, 2_400, 4, 2_400, tau2)
+    assert big < small / 100
+    assert msprt_p(10, 1_000, 10, 1_000, tau2) == 1.0  # no gap, no evidence
 
 
 def test_never_returns_control():

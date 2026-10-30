@@ -58,10 +58,10 @@ def recent(start, end):
     return [e for e in state["events"] if start <= e["ts"] <= end]
 
 
-def counts(end):
+def counts(start, end):
     """Same shape as main.SQL: one row per (flag, variant, version, signal), zero-filled."""
     users, crashed = {}, {}
-    for e in recent(end - WINDOW, end):
+    for e in recent(start, end):
         for key, value in e.get("tags", {}).items():
             if not key.startswith("ff_"):
                 continue
@@ -77,11 +77,11 @@ def counts(end):
     ]
 
 
-def segments(q, end):
+def segments(q, start, end):
     """Same shape as main.SEGMENTS_SQL: affected users per OS and device, variant and control."""
     tag, keep = "ff_" + q["flag"], (q["variant"], q["control"])
     seen = {}
-    for e in recent(end - WINDOW, end):
+    for e in recent(start, end):
         v = e.get("tags", {}).get(tag)
         if v in keep and e["type"] == q["signal"] and e["version"] == q["version"]:
             for dim in ("os", "device"):
@@ -100,7 +100,7 @@ def kill(flag):
 
 def page():
     esc = html.escape
-    rows = sorted(counts(now()), key=lambda r: (r["flag"], r["signal"], r["variant"]))
+    rows = sorted(counts(now() - WINDOW, now()), key=lambda r: (r["flag"], r["signal"], r["variant"]))
     table = "".join(
         f"<tr><td>{esc(r['flag'])}</td><td>{esc(r['variant'])}</td><td>{esc(r['version'])}</td>"
         f"<td>{r['signal']}</td><td>{r['users']}</td><td>{r['crashed_users']}</td>"
@@ -158,15 +158,16 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         end = dt.datetime.fromisoformat(q["end"]) if "end" in q else now()
+        start = dt.datetime.fromisoformat(q["start"]) if "start" in q else end - WINDOW
         with lock:
             if url.path == "/":
                 return self.send(page(), kind="text/html; charset=utf-8")
             if url.path == "/config":
                 return self.send(config(q.get("user", "")))
             if url.path == "/counts":
-                return self.send(counts(end))
+                return self.send(counts(start, end))
             if url.path == "/segments":
-                return self.send(segments(q, end))
+                return self.send(segments(q, start, end))
             if url.path == "/audit":
                 since = dt.datetime.fromisoformat(q["since"]) if "since" in q else end - WINDOW
                 return self.send([a for a in state["audit"] if dt.datetime.fromisoformat(a["ts"]) > since])

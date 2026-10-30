@@ -1,58 +1,92 @@
 {
-  "generated": "2026-10-29 15:17 UTC",
+  "generated": "2026-10-30 22:09 UTC",
   "seeds": 30,
   "users_per_run": 3000,
-  "unit_tests": 33,
+  "unit_tests": 35,
   "scenarios": {
     "healthy": {
       "runs": 30,
       "detected": 0,
+      "detected_day1": 0,
       "false_alerts": 0,
       "correct_action": 0,
       "breakdown_right": 0,
       "breakdown_noise": 0,
       "median_ratio": null,
-      "median_job_ms": 63
+      "median_job_ms": 63,
+      "median_day": null
     },
     "crash": {
       "runs": 30,
-      "detected": 27,
+      "detected": 30,
+      "detected_day1": 25,
       "false_alerts": 0,
-      "correct_action": 27,
+      "correct_action": 30,
       "breakdown_right": 0,
-      "breakdown_noise": 1,
-      "median_ratio": 9.7,
-      "median_job_ms": 66
+      "breakdown_noise": 0,
+      "median_ratio": 9.5,
+      "median_job_ms": 63,
+      "median_day": 1.0
     },
     "anr": {
       "runs": 30,
       "detected": 30,
+      "detected_day1": 28,
       "false_alerts": 0,
       "correct_action": 30,
       "breakdown_right": 0,
       "breakdown_noise": 2,
       "median_ratio": 9.8,
-      "median_job_ms": 66
+      "median_job_ms": 61,
+      "median_day": 1.0
     },
     "nonfatal": {
       "runs": 30,
       "detected": 30,
+      "detected_day1": 30,
       "false_alerts": 0,
       "correct_action": 30,
       "breakdown_right": 0,
       "breakdown_noise": 0,
       "median_ratio": 10.8,
-      "median_job_ms": 65
+      "median_job_ms": 62,
+      "median_day": 1.0
     },
     "android14": {
       "runs": 30,
-      "detected": 24,
+      "detected": 30,
+      "detected_day1": 19,
       "false_alerts": 0,
-      "correct_action": 24,
-      "breakdown_right": 17,
+      "correct_action": 30,
+      "breakdown_right": 24,
       "breakdown_noise": 0,
-      "median_ratio": 9.1,
-      "median_job_ms": 66
+      "median_ratio": 8.5,
+      "median_job_ms": 61,
+      "median_day": 1.0
+    },
+    "tiny_healthy": {
+      "runs": 30,
+      "detected": 0,
+      "detected_day1": 0,
+      "false_alerts": 0,
+      "correct_action": 0,
+      "breakdown_right": 0,
+      "breakdown_noise": 0,
+      "median_ratio": null,
+      "median_job_ms": 59,
+      "median_day": null
+    },
+    "tiny_crash": {
+      "runs": 30,
+      "detected": 25,
+      "detected_day1": 0,
+      "false_alerts": 0,
+      "correct_action": 25,
+      "breakdown_right": 0,
+      "breakdown_noise": 4,
+      "median_ratio": 8.8,
+      "median_job_ms": 59,
+      "median_day": 4
     }
   }
 }

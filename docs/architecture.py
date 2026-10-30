@@ -95,12 +95,12 @@ def build():
     jh = (r2y + chh + 24) - jy
     s.insert(0, f'<rect x="{L}" y="{jy}" width="{R - L}" height="{jh}" rx="14" fill="{{panel}}" stroke="{{pstroke}}"/>')
     s.append(text(L + 20, jy + 30, "Culprit job", 16, 700))
-    s.append(text(L + 120, jy + 30, "Cloud Run · every 15 minutes · last 24 hours", 13, 400, "muted"))
+    s.append(text(L + 120, jy + 30, "Cloud Run · every 15 minutes · last 7 days", 13, 400, "muted"))
     g = 28
     w3 = (rw - 2 * g) / 3
     row1 = [("Count", ["affected and active users per flag,", "variant, version and signal"]),
-            ("Detect", ["each variant vs control:", "≥ 2× the rate, significant z-test"]),
-            ("De-duplicate", ["skip anything already", "reported in the last 24h"])]
+            ("Detect", ["each variant vs control: ≥ 2×,", "sequential test (mSPRT)"]),
+            ("De-duplicate", ["skip anything already", "reported in the last 7 days"])]
     for i, (t, ls) in enumerate(row1):
         x = L + 20 + i * (w3 + g)
         s += card(x, r1y, w3, chh, t, ls, num=i + 1)
@@ -147,7 +147,7 @@ def render(theme):
             f'role="img" aria-labelledby="t d">\n<title id="t">How Culprit works</title>\n'
             f'<desc id="d">The app reads flags through Flags.variant, which serves the control value when killswitch_flag is on, '
             f'and tags every crash and session with the variant. Crash data reaches Culprit through the Crashlytics BigQuery export '
-            f'or the Sentry API. Every 15 minutes the Culprit job counts users per variant, detects regressions against control, '
+            f'or the Sentry API. Every 15 minutes the Culprit job counts users per variant, detects regressions against control with a sequential test, '
             f'skips repeats, optionally turns on the kill switch, breaks errors down by OS and device, alerts Slack and writes an '
             f'audit row. On the next flag fetch, users get the control value.</desc>\n{defs}\n{svg}\n</svg>\n')
 

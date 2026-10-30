@@ -66,7 +66,7 @@ Crash tools handle step 1. Culprit handles steps 2 to 4.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
-  <img src="docs/architecture-light.svg" width="100%" alt="How Culprit works. In the app, Flags.variant serves the control value when the flag's kill switch is on, otherwise the Remote Config or Statsig value, and Flags.tag adds the flag and variant to every crash and session. Crash data reaches Culprit through the Crashlytics BigQuery export or the Sentry API. Every 15 minutes the Culprit job: 1 counts affected and active users per flag, variant, version and signal; 2 detects variants at least 2x worse than control with a significant z-test; 3 skips anything reported in the last 24 hours; 4 turns on the kill switch if auto-kill is allowed; 5 breaks errors down by OS and device; 6 posts a Slack alert; 7 writes an audit row to BigQuery. On the next flag fetch, users get control.">
+  <img src="docs/architecture-light.svg" width="100%" alt="How Culprit works. In the app, Flags.variant serves the control value when the flag's kill switch is on, otherwise the Remote Config or Statsig value, and Flags.tag adds the flag and variant to every crash and session. Crash data reaches Culprit through the Crashlytics BigQuery export or the Sentry API. Every 15 minutes the Culprit job: 1 counts affected and active users per flag, variant, version and signal; 2 detects variants at least 2x worse than control with a sequential test over the last 7 days; 3 skips anything already reported in that window; 4 turns on the kill switch if auto-kill is allowed; 5 breaks errors down by OS and device; 6 posts a Slack alert; 7 writes an audit row to BigQuery. On the next flag fetch, users get control.">
 </picture>
 
 **Why a separate kill switch?** Editing an experiment's targeting automatically is risky, and Firebase A/B Testing has no public API for stopping an experiment. A separate boolean, `killswitch_<flag>`, that the app checks first works with any flag tool, can only ever send users to the control (known-good) path, and is easy to undo.
@@ -128,7 +128,7 @@ Open http://localhost:8787/, then in a second terminal:
 cd sandbox && python3 simulate.py crash && python3 run_job.py --auto-kill
 ```
 
-Within a few seconds the page shows the Slack alert, the audit row, and `killswitch_new_checkout` turned on. New simulated users now get control.
+Within a few seconds the page shows the Slack alert, the audit row, and `killswitch_new_checkout` turned on. New simulated users now get control. If a random sample is borderline and nothing fires, run both commands again: like a second day of traffic, the evidence adds up.
 
 | Scenario | Expect |
 |---|---|
@@ -138,9 +138,9 @@ Within a few seconds the page shows the Slack alert, the audit row, and `killswi
 | `nonfatal` | NON_FATAL alert, never a kill |
 | `android14` | FATAL alert, breakdown names Android 14 |
 
-Use **Turn off (undo kill)** or **Reset everything** on the page between runs. `python3 benchmark.py` runs every scenario 30 times and writes `docs/results.json`, which the [test results page](https://sivaram87.github.io/Culprit/testing.html) shows. `run_job.py --every 30` repeats the job like the scheduler does, and running it twice shows that an alert isn't repeated within 24 hours.
+Use **Turn off (undo kill)** or **Reset everything** on the page between runs. `python3 benchmark.py` runs every scenario 30 times over simulated days, including small rollouts of 300 users per variant a day, and writes `docs/results.json`, which the [test results page](https://sivaram87.github.io/Culprit/testing.html) shows. `run_job.py --every 30` repeats the job like the scheduler does, and running it twice shows that an alert isn't repeated.
 
-**What the sandbox covers:** `job/main.py` `run()` and everything in `detect.py`: thresholds, the z-test, dedupe, kill policy, breakdown, Slack text and audit rows. **What it doesn't:** the BigQuery SQL, the Sentry queries, and the real Remote Config and Statsig writes. The sandbox's `/counts` and `/segments` return rows in the same shape those queries do. Test the real ones in a [staging project](#testing).
+**What the sandbox covers:** `job/main.py` `run()` and everything in `detect.py`: thresholds, the sequential test, dedupe, kill policy, breakdown, Slack text and audit rows. **What it doesn't:** the BigQuery SQL, the Sentry queries, and the real Remote Config and Statsig writes. The sandbox's `/counts` and `/segments` return rows in the same shape those queries do. Test the real ones in a [staging project](#testing).
 
 ### Sample iOS app
 
@@ -299,7 +299,7 @@ Changes to this file go through code review. That review is the approval step fo
 
 ### 5. Backtest
 
-Before deploying, check what Culprit would have flagged over the last 30 days. Neither `--backtest` nor `--dry-run` (last 24h only) posts to Slack, writes the audit table or touches a kill switch.
+Before deploying, check what Culprit would have flagged over the last 30 days. Neither `--backtest` nor `--dry-run` (as of now) posts to Slack, writes the audit table or touches a kill switch.
 
 ```bash
 cd job
@@ -390,7 +390,8 @@ Environment variables read by the job:
 | `MIN_USERS` | — | Minimum users in both variant and control (default `500`) |
 | `MIN_CRASHES` | — | Minimum affected users in the variant (default `10`) |
 | `MIN_RATIO` | — | Variant rate must be at least this × control (default `2.0`) |
-| `ALPHA` | — | Significance level before Bonferroni correction (default `0.001`) |
+| `ALPHA` | — | Chance of a false alarm per comparison, ever, before Bonferroni correction (default `0.01`) |
+| `LOOKBACK_DAYS` | — | Days of data each run tests; evidence builds up over this window (default `7`) |
 
 Use the `MIN_*` overrides in a staging project, where traffic is small.
 
@@ -398,7 +399,6 @@ Constants in `main.py`:
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `WINDOW` | 24h | Rolling window for counts and alert de-duplication |
 | `MAX_KILLS_PER_DAY` | 1 | Automatic kills allowed per 24h; further findings only alert |
 
 ## Detection rules
@@ -420,7 +420,7 @@ A variant is flagged only when **all** of these hold:
 | Users in variant and control | ≥ 500 each | Small samples are noise |
 | Affected users in variant | ≥ 10 | One bad device shouldn't trigger an alert |
 | Variant rate ÷ control rate | ≥ 2× | Statistically significant but trivial differences aren't worth a page |
-| One-sided two-proportion z-test | p < `ALPHA` ÷ number of comparisons | Bonferroni correction: 20 flags checked every run shouldn't mean 20 chances of a false alarm |
+| Sequential test (mSPRT) | always-valid p < `ALPHA` ÷ number of comparisons | Stays valid although the job checks every 15 minutes. Bonferroni correction: 20 flags checked shouldn't mean 20 chances of a false alarm |
 
 Details:
 - Each signal is compared on its own: an ANR regression is flagged even when the crash rate is flat.
@@ -428,7 +428,9 @@ Details:
 - Units are **distinct affected installs** over **distinct active installs**. With Crashlytics those are `installation_uuid` and `user_pseudo_id`. With Sentry both are `count_unique(user)`, with active users taken from app-start traces. The two numbers come from different data, so the detector caps affected users at the user count.
 - Breaking results down by version (Sentry: by release) means a crash that exists only in v5.2 isn't hidden by healthy older versions.
 - The control variant is never flagged.
-- A (flag, variant, version, signal) already reported in the last 24h isn't reported again.
+- A (flag, variant, version, signal) already reported within the lookback window isn't reported again. Its old crashes are still in the window after a kill, so this stops a daily repeat.
+- **Why sequential:** each run tests the last `LOOKBACK_DAYS` (7) of data, so evidence for a small rollout builds up instead of resetting every day. A plain z-test checked every 15 minutes on growing data would raise false alarms. mSPRT (mixture sequential probability ratio test) gives a p-value that stays valid however often it's checked. The mixture is centred on a `MIN_RATIO`-sized regression (2× by default). The cost is a stricter single look, so a borderline sample can wait a day for more data. In the [benchmark](https://sivaram87.github.io/Culprit/testing.html), every regular regression was caught by day 2 with no false alarms. A small rollout with 300 users per variant a day, which a 24-hour window never caught, was caught in 25 of 30 runs, by day 4 on median.
+- A new app version starts its own counts, so the window effectively starts at its release. Data older than 7 days drops out, which bounds BigQuery cost.
 
 ### Where it happens: OS and device breakdown
 
@@ -633,7 +635,8 @@ Crashlytics doesn't report iOS app hangs (its ANR type is Android-only), so test
 - **One set of thresholds for all signals.** Non-fatal rates are usually much higher than crash rates. That's fine for a ratio test, but noisy apps may want separate thresholds later.
 - **Remote Config kill-switch parameters must not be inside a parameter group.** If one is, the API rejects the update and nothing changes; the job fails loudly.
 - **The flag list is kept in two places** (`Flags.watched` and `flags.json`) and must match.
-- **Fixed thresholds plus a z-test.** Simple and predictable, but slower to react than sequential testing on low-traffic flags.
+- **The sequential test's mixture comes from the data.** Its expected gap is set from the observed pooled rate, not a prior fitted to your history. Revisit `tau2` in `detect.py` if detection drifts.
+- **A single look is strict.** Borderline samples wait for the next day's data rather than alerting on day 1.
 - **The breakdown compares shares, not rates.** It shows where the variant's errors concentrate relative to control, not the crash rate on each device, which would need active users per device.
 - **Sentry's `os` and `device` tags** are what the breakdown groups by. Check in staging that they hold what you expect for your SDK version.
 - **One app per job.** iOS and Android need separate deploys.
@@ -644,7 +647,6 @@ Crashlytics doesn't report iOS app hangs (its ANR type is Android-only), so test
 These will be added when there's a need:
 
 - More tools: LaunchDarkly or Unleash for flags, Bugsnag or Embrace for crashes. Each is one `counts` or `kill` function plus a branch in `main.py`.
-- Sequential testing (mSPRT) for faster, safer detection
 - Detection per OS version, for regressions too small to move the overall rate
 - Recording undos and false alarms in the audit table, so the dashboard can show current state and precision
 

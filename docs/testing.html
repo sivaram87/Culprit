@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Culprit Test Results</title>
 <meta name="author" content="Sivaram Jebamani">
-<meta name="description" content="How Culprit was tested end to end: a local sandbox, an iOS demo app, and 150 simulated runs through the real job, with the key results.">
+<meta name="description" content="How Culprit was tested end to end: a local sandbox, an iOS demo app, and 210 simulated runs through the real job, with the key results.">
 <link rel="icon" href="icon.svg?v=2" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.png?v=2">
 <style>
@@ -139,7 +139,7 @@ footer { max-width: 960px; margin: 0 auto; padding: 24px 16px 56px; color: var(-
   </div>
 
   <h2 id="results">Key results</h2>
-  <p>Five scenarios, 30 random seeds each, 3,000 users per run (about 1,500 per variant), all run with auto-kill on. Every run goes through the real <code>run()</code> in <code>job/main.py</code>: thresholds, the z-test, dedupe, kill policy, breakdown, Slack text and the audit row.</p>
+  <p>Seven scenarios, 30 random seeds each, all run with auto-kill on. Each run simulates days: a batch of users, then the job, repeated while evidence builds up, as it does in production. Regular scenarios get up to 2 days of 3,000 users (about 1,500 per variant). The two <b>small rollout</b> scenarios get up to 5 days of just 300 users per variant, below the 500-user minimum for any single day. Every run goes through the real <code>run()</code> in <code>job/main.py</code>: thresholds, the sequential test, dedupe, kill policy, breakdown, Slack text and the audit row.</p>
   <div class="tiles" id="tiles"></div>
 
   <div class="card chart">
@@ -150,13 +150,19 @@ footer { max-width: 960px; margin: 0 auto; padding: 24px 16px 56px; color: var(-
 
   <div class="table-wrap card">
     <table>
-      <thead><tr><th>Scenario</th><th>What's broken</th><th class="num">Runs</th><th class="num">Found</th><th class="num">Right action</th><th class="num">Other alerts</th><th class="num">Breakdown</th><th class="num">Median ratio</th></tr></thead>
+      <thead><tr><th>Scenario</th><th>What's broken</th><th class="num">Runs</th><th class="num">Found</th><th class="num">On day 1</th><th class="num">Median day</th><th class="num">Right action</th><th class="num">Other alerts</th><th class="num">Breakdown</th><th class="num">Median ratio</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
 
-  <h3>Reading the misses</h3>
-  <p>Every miss was a run where the regression didn't clear Culprit's deliberately strict bar: at least 10 affected users, at least 2× control, and p below 0.001 split across the three signals. With about 30 crashes in 1,500 users, random noise sometimes leaves the gap just under it. The Android 14 scenario misses more often because only a quarter of users carry the bug, so the overall rate rises less. In production the job reruns every 15 minutes over a 24-hour window, and more users give the test more power. The trade is intentional: a missed run costs one more run, a false kill costs a working feature.</p>
+  <h3>Why evidence builds over days</h3>
+  <p>Culprit uses a sequential test (mSPRT). Its p-value stays valid however often the job checks, so each run looks at the last 7 days instead of starting over every 24 hours. Checking every 15 minutes doesn't add false alarms: none in 210 healthy looks here.</p>
+  <ul>
+    <li><b>Borderline day-1 samples are settled on day 2.</b> A single look is stricter than the old one-shot z-test, so samples like 17 vs 6 crashes wait for more data. The Android 14 scenario has the most of these because only a quarter of users carry the bug.</li>
+    <li><b>Small rollouts get caught.</b> With 300 users per variant a day, the old 24-hour window never reached the 500-user minimum, so it caught none of them. Now most are caught by day 4.</li>
+    <li><b>The remaining misses</b> are small-rollout runs still below the bar on day 5. They keep building evidence until the 7-day window is full.</li>
+  </ul>
+  <p>A missed run costs one more run; a false kill costs a working feature.</p>
 
   <h2 id="dashboard">The sandbox dashboard</h2>
   <p>The sandbox serves a live page at <code>http://localhost:8787/</code> that refreshes every 3 seconds. This is the Android 14 scenario after one job run with auto-kill:</p>
@@ -170,9 +176,9 @@ footer { max-width: 960px; margin: 0 auto; padding: 24px 16px 56px; color: var(-
     <section class="card">
       <h3 style="color: var(--ok)">Covered by the sandbox</h3>
       <ul>
-        <li>Detection: thresholds, z-test and Bonferroni correction</li>
+        <li>Detection: thresholds, sequential test (mSPRT) and Bonferroni correction, over repeated looks</li>
         <li>Kill policy: auto-kill opt-in, non-fatal errors never kill</li>
-        <li>No repeat alert within 24 hours</li>
+        <li>No repeat alert within the 7-day window</li>
         <li>OS and device breakdown, and the Slack text</li>
         <li>Audit rows</li>
         <li>The app side: wrapper, tagging, kill switch serving control</li>
@@ -227,29 +233,35 @@ python3 benchmark.py                           # regenerates the numbers on this
     anr: ["ANR", "on freezes 10× more"],
     nonfatal: ["Non-fatal", "on logs 10× more errors"],
     android14: ["Android 14 crash", "on crashes, Android 14 only"],
+    tiny_healthy: ["Small rollout, healthy", "Nothing; 300 users per variant a day"],
+    tiny_crash: ["Small rollout, crash", "on crashes 10× more; 300 users per variant a day"],
   };
+  const healthy = (k) => k.endsWith("healthy");
   const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0) + "%";
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
   fetch("results.json", { cache: "no-cache" }).then((r) => r.json()).then((d) => {
-    const s = d.scenarios, broken = Object.keys(s).filter((k) => k !== "healthy");
+    const s = d.scenarios, broken = Object.keys(s).filter((k) => !healthy(k));
     const runs = Object.values(s).reduce((n, x) => n + x.runs, 0);
     const brokenRuns = broken.reduce((n, k) => n + s[k].runs, 0);
     const found = broken.reduce((n, k) => n + s[k].detected, 0);
     const actions = broken.reduce((n, k) => n + s[k].detected, 0);
     const wrongActions = broken.reduce((n, k) => n + s[k].detected - s[k].correct_action, 0);
-    const falseAlarms = s.healthy.detected + Object.values(s).reduce((n, x) => n + x.false_alerts, 0);
+    const healthyRuns = Object.keys(s).filter(healthy).reduce((n, k) => n + s[k].runs, 0);
+    const falseAlarms = Object.keys(s).filter(healthy).reduce((n, k) => n + s[k].detected, 0)
+      + Object.values(s).reduce((n, x) => n + x.false_alerts, 0);
+    const tiny = s.tiny_crash;
     const a14 = s.android14;
     const ms = Object.values(s).map((x) => x.median_job_ms).sort((a, b) => a - b)[2];
 
     document.getElementById("generated").textContent =
-      `${runs} runs · ${d.users_per_run.toLocaleString()} users each · generated ${d.generated} by sandbox/benchmark.py`;
+      `${runs} runs · generated ${d.generated} by sandbox/benchmark.py`;
 
     const tiles = [
       ["Broken features caught", pct(found, brokenRuns), `${found} of ${brokenRuns} broken runs`],
-      ["False alarms", String(falseAlarms), `in ${runs} runs, including 30 healthy ones`],
-      ["Wrong actions", String(wrongActions), `of ${actions} alerts and kills`],
-      ["Non-fatal errors killed", String(s.nonfatal.detected - s.nonfatal.correct_action), `${s.nonfatal.detected} alerted, never killed`],
+      ["False alarms", String(falseAlarms), `in ${runs} runs, including ${healthyRuns} healthy ones`],
+      ["Wrong actions", String(wrongActions), `of ${actions} alerts and kills; non-fatal errors never killed`],
+      ["Small rollouts caught", pct(tiny.detected, tiny.runs), `${tiny.detected} of ${tiny.runs}, median day ${tiny.median_day}; 0 with a 24h window`],
       ["Breakdown named Android 14", pct(a14.breakdown_right, a14.detected), `${a14.breakdown_right} of ${a14.detected}; never an iOS segment`],
       ["Unit tests passing", `${d.unit_tests}/${d.unit_tests}`, `job runs in ~${ms} ms in the sandbox`],
     ];
@@ -262,7 +274,7 @@ python3 benchmark.py                           # regenerates the numbers on this
 
     const bars = document.getElementById("bars");
     for (const [k, x] of Object.entries(s)) {
-      const good = k === "healthy" ? x.runs - x.false_alerts - x.detected : x.correct_action;
+      const good = healthy(k) ? x.runs - x.false_alerts - x.detected : x.correct_action;
       const name = el("div", "name", WHAT[k][0]);
       name.append(el("small", null, WHAT[k][1]));
       const track = el("div", "track");
@@ -283,8 +295,10 @@ python3 benchmark.py                           # regenerates the numbers on this
       const tr = document.createElement("tr");
       const bd = k === "android14" ? `${x.breakdown_right}/${x.detected} right`
         : x.detected ? `${x.detected - x.breakdown_noise}/${x.detected} clean` : "—";
-      const cells = [WHAT[k][0], WHAT[k][1], x.runs, k === "healthy" ? "—" : `${x.detected}`,
-        k === "healthy" ? "—" : `${x.correct_action}/${x.detected}`, x.false_alerts + (k === "healthy" ? x.detected : 0),
+      const h = healthy(k);
+      const cells = [WHAT[k][0], WHAT[k][1], x.runs, h ? "—" : `${x.detected}`, h ? "—" : x.detected_day1,
+        h || x.median_day == null ? "—" : x.median_day,
+        h ? "—" : `${x.correct_action}/${x.detected}`, x.false_alerts + (h ? x.detected : 0),
         bd, x.median_ratio ? x.median_ratio + "×" : "—"];
       cells.forEach((c, i) => tr.append(el("td", i >= 2 ? "num" : null, String(c))));
       rows.append(tr);

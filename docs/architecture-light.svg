@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 692" width="980" height="692" role="img" aria-labelledby="t d">
 <title id="t">How Culprit works</title>
-<desc id="d">The app reads flags through Flags.variant, which serves the control value when killswitch_flag is on, and tags every crash and session with the variant. Crash data reaches Culprit through the Crashlytics BigQuery export or the Sentry API. Every 15 minutes the Culprit job counts users per variant, detects regressions against control, skips repeats, optionally turns on the kill switch, breaks errors down by OS and device, alerts Slack and writes an audit row. On the next flag fetch, users get the control value.</desc>
+<desc id="d">The app reads flags through Flags.variant, which serves the control value when killswitch_flag is on, and tags every crash and session with the variant. Crash data reaches Culprit through the Crashlytics BigQuery export or the Sentry API. Every 15 minutes the Culprit job counts users per variant, detects regressions against control with a sequential test, skips repeats, optionally turns on the kill switch, breaks errors down by OS and device, alerts Slack and writes an audit row. On the next flag fetch, users get the control value.</desc>
 <defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7781"/></marker><marker id="ha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c93434"/></marker></defs>
 <rect x="40" y="364" width="900" height="308" rx="14" fill="#f6f8fa" stroke="#d0d7de"/>
 <rect x="40" y="24" width="900" height="212" rx="14" fill="#f6f8fa" stroke="#d0d7de"/>
@@ -35,7 +35,7 @@
 <text x="490.0" y="307" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#1f2328" text-anchor="middle">Crashlytics → BigQuery export   or   Sentry API</text>
 <path d="M490.0,324 L490.0,360" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
 <text x="60" y="394" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#1f2328" text-anchor="start">Culprit job</text>
-<text x="160" y="394" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#59636e" text-anchor="start">Cloud Run · every 15 minutes · last 24 hours</text>
+<text x="160" y="394" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#59636e" text-anchor="start">Cloud Run · every 15 minutes · last 7 days</text>
 <rect x="60.0" y="416" width="268.0" height="96" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
 <circle cx="84.0" cy="440" r="11" fill="#1f2328"/>
 <text x="84.0" y="444.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
@@ -46,15 +46,15 @@
 <circle cx="380.0" cy="440" r="11" fill="#1f2328"/>
 <text x="380.0" y="444.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
 <text x="400.0" y="445" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#1f2328" text-anchor="start">Detect</text>
-<text x="372.0" y="468" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">each variant vs control:</text>
-<text x="372.0" y="486" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">≥ 2× the rate, significant z-test</text>
+<text x="372.0" y="468" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">each variant vs control: ≥ 2×,</text>
+<text x="372.0" y="486" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">sequential test (mSPRT)</text>
 <path d="M330.0,464.0 L352.0,464.0" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
 <rect x="652.0" y="416" width="268.0" height="96" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
 <circle cx="676.0" cy="440" r="11" fill="#1f2328"/>
 <text x="676.0" y="444.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
 <text x="696.0" y="445" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#1f2328" text-anchor="start">De-duplicate</text>
 <text x="668.0" y="468" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">skip anything already</text>
-<text x="668.0" y="486" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">reported in the last 24h</text>
+<text x="668.0" y="486" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">reported in the last 7 days</text>
 <path d="M626.0,464.0 L648.0,464.0" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
 <rect x="60.0" y="552" width="200.0" height="96" rx="10" fill="#fdecea" stroke="#c93434" stroke-width="2"/>
 <circle cx="84.0" cy="576" r="11" fill="#c93434"/>

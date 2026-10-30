@@ -10,6 +10,7 @@ Env:
   SLACK_WEBHOOK      mounted from Secret Manager
   AUTO_KILL=1        allow kills for flags with "auto_kill": true (default: alert only)
   MIN_USERS, MIN_CRASHES, MIN_RATIO, ALPHA   optional threshold overrides (staging)
+  LOOKBACK_DAYS      days of data each run tests (default 7); evidence grows over this window
 
 Usage: python main.py [--dry-run] [--backtest DAYS]
 """
@@ -31,7 +32,8 @@ import source_sentry
 
 RC_URL = "https://firebaseremoteconfig.googleapis.com/v1/projects/{}/remoteConfig"
 MAX_KILLS_PER_DAY = 1
-WINDOW = dt.timedelta(hours=24)
+LOOKBACK = dt.timedelta(days=int(os.environ.get("LOOKBACK_DAYS", 7)))  # counts, breakdown, repeat alerts
+DAY = dt.timedelta(hours=24)  # kill cap and backtest step
 
 # Affected users and active users per (flag, variant, version, signal). Both sides tag
 # the same key: Crashlytics custom key / Analytics user property "ff_<flag>".
@@ -92,7 +94,7 @@ def counts_bigquery(bq, end):
         analytics=os.environ["ANALYTICS_DATASET"],
         signals=list(detect.SIGNALS),  # Python list repr is a valid BigQuery string array
     )
-    return query(bq, sql, start=end - WINDOW, end=end)
+    return query(bq, sql, start=end - LOOKBACK, end=end)
 
 
 def counts(bq, flags, end):
@@ -100,7 +102,7 @@ def counts(bq, flags, end):
     if source == "crashlytics":
         return counts_bigquery(bq, end)
     if source == "sentry":
-        return source_sentry.counts(flags, end - WINDOW, end)
+        return source_sentry.counts(flags, end - LOOKBACK, end)
     raise ValueError(f"unknown SIGNAL_SOURCE {source!r}")
 
 
@@ -108,7 +110,7 @@ def segments_bigquery(bq, f, control, end):
     sql = SEGMENTS_SQL.format(crash_table=os.environ["CRASHLYTICS_TABLE"])
     return query(
         bq, sql, tag="ff_" + f.flag, variant=f.variant, control=control,
-        version=f.version, signal=f.signal, start=end - WINDOW, end=end,
+        version=f.version, signal=f.signal, start=end - LOOKBACK, end=end,
     )
 
 
@@ -119,7 +121,7 @@ def breakdown(bq, f, flags, end):
     try:
         source = os.environ.get("SIGNAL_SOURCE", "crashlytics")
         if source == "sentry":
-            rows = source_sentry.segments(f, control, end - WINDOW, end)
+            rows = source_sentry.segments(f, control, end - LOOKBACK, end)
         else:
             rows = segments_bigquery(bq, f, control, end)
         return detect.concentration(rows, f.variant, control)
@@ -170,7 +172,7 @@ def slack(f, action, segments):
     what = {"FATAL": "crash", "ANR": "ANR", "NON_FATAL": "non-fatal error"}[f.signal]
     text = (
         f":rotating_light: *{f.flag}={f.variant}* on v{f.version}: {what} rate {f.crash_rate:.2%} "
-        f"vs control {f.control_rate:.2%} ({f.crashed_users}/{f.users} users, p={f.p:.1e}). "
+        f"vs control {f.control_rate:.2%} ({f.crashed_users}/{f.users} users, last {LOOKBACK.days}d, p={f.p:.1e}). "
         f"Action: *{action}*. {next_step}\n{detect.describe(segments)}"
     )
     requests.post(os.environ["SLACK_WEBHOOK"], json={"text": text}, timeout=10).raise_for_status()
@@ -186,21 +188,26 @@ def audit(bq, f, action, now, segments):
         raise RuntimeError(errors)
 
 
+def as_time(ts):
+    return ts if isinstance(ts, dt.datetime) else dt.datetime.fromisoformat(ts)
+
+
 def run(bq, flags, now):
     findings = detect.detect(counts(bq, flags, now), flags, **thresholds())
     if not findings:
         return
     recent = query(
         bq,
-        f"SELECT flag, variant, version, signal, action FROM `{os.environ['AUDIT_TABLE']}` WHERE ts > @since",
-        since=now - WINDOW,
+        f"SELECT ts, flag, variant, version, signal, action FROM `{os.environ['AUDIT_TABLE']}` WHERE ts > @since",
+        since=now - LOOKBACK,
     )
+    # Old crashes stay in the window after a kill, so "already reported" spans the whole lookback.
     seen = {(a["flag"], a["variant"], a["version"], a["signal"]) for a in recent}
-    kills = sum(a["action"] == "killed" for a in recent)
+    kills = sum(a["action"] == "killed" and as_time(a["ts"]) > now - DAY for a in recent)
     auto_kill = os.environ.get("AUTO_KILL") == "1"
     for f in findings:
         if (f.flag, f.variant, f.version, f.signal) in seen:
-            continue  # already alerted in the last 24h
+            continue  # already alerted within the lookback
         action = detect.action_for(f, flags, auto_kill, kills, MAX_KILLS_PER_DAY)
         if action == "kill":
             action = kill(f.flag)
@@ -213,7 +220,7 @@ def run(bq, flags, now):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="print findings, no Slack/audit/kill")
-    ap.add_argument("--backtest", type=int, metavar="DAYS", help="dry-run one 24h window per past day")
+    ap.add_argument("--backtest", type=int, metavar="DAYS", help="dry-run as of each past day")
     args = ap.parse_args()
 
     flags = json.loads((pathlib.Path(__file__).parent / "flags.json").read_text())
@@ -222,7 +229,7 @@ def main():
 
     if args.dry_run or args.backtest:
         for i in range(args.backtest or 1):
-            end = now - i * WINDOW
+            end = now - i * DAY
             for f in detect.detect(counts(bq, flags, end), flags, **thresholds()):
                 print(end.date(), f)
                 print("   ", detect.describe(breakdown(bq, f, flags, end)))

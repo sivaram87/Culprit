@@ -57,10 +57,11 @@ import main  # noqa: E402
 def wire(url):
     """Point the job's data, kill and audit calls at the sandbox."""
     get = lambda path, **q: http(f"{url}{path}?{urllib.parse.urlencode(q)}").json()
-    main.counts = lambda bq, flags, end: get("/counts", end=end.isoformat())
+    span = lambda end: dict(start=(end - main.LOOKBACK).isoformat(), end=end.isoformat())
+    main.counts = lambda bq, flags, end: get("/counts", **span(end))
     main.segments_bigquery = lambda bq, f, control, end: get(
         "/segments", flag=f.flag, variant=f.variant, control=control,
-        version=f.version, signal=f.signal, end=end.isoformat())
+        version=f.version, signal=f.signal, **span(end))
     main.kill = lambda flag: http(f"{url}/kill", {"flag": flag}).json()["result"]
     main.query = lambda bq, sql, since: get("/audit", since=since.isoformat())  # the dedupe read in run()
     return types.SimpleNamespace(insert_rows_json=lambda table, rows: http(f"{url}/audit", rows) and [])
@@ -82,9 +83,9 @@ def main_():
     bq = wire(a.url)
 
     while True:
-        before = len(main.query(bq, "", since=dt.datetime.now(dt.timezone.utc) - main.WINDOW))
+        before = len(main.query(bq, "", since=dt.datetime.now(dt.timezone.utc) - main.LOOKBACK))
         main.run(bq, flags, dt.datetime.now(dt.timezone.utc))
-        after = main.query(bq, "", since=dt.datetime.now(dt.timezone.utc) - main.WINDOW)
+        after = main.query(bq, "", since=dt.datetime.now(dt.timezone.utc) - main.LOOKBACK)
         new = after[before:]
         print(f"{dt.datetime.now():%H:%M:%S} job ran: {len(new)} new finding(s)"
               + "".join(f"\n  {r['flag']}={r['variant']} v{r['version']} {r['signal']}: {r['action']}" for r in new))

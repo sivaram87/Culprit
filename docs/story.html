@@ -145,8 +145,8 @@ footer { max-width: 700px; margin: 0 auto; padding: 24px 16px 56px; color: var(-
   <h3>1. The app tags every crash with the flags the user had</h3>
   <p>Your app reads watched flags through a tiny <code>Flags</code> wrapper (about 30 lines, no vendor imports). It attaches the variant the user actually got, like <code>ff_new_checkout=on</code>, to every crash and session in your crash tool. It also checks a <code>killswitch_new_checkout</code> switch first, so the app can be told to fall back to the safe version.</p>
   <h3>2. A job compares every variant with its control</h3>
-  <p>Every 15 minutes, a small job on Google Cloud counts, for the last 24 hours, how many users each variant had and how many of them hit a problem. It does this separately for each <strong>app version</strong> and each <strong>kind of problem</strong>: crashes, ANRs (the app freezing) and non-fatal errors. Then it asks a simple question: is this variant clearly worse than the people who didn't get it?</p>
-  <p>"Clearly" is deliberately strict. There must be enough users, enough affected users, a rate at least twice control's, and a statistical test that holds up even though dozens of flags are checked every run. Most noise never makes it through.</p>
+  <p>Every 15 minutes, a small job on Google Cloud counts, for the last 7 days, how many users each variant had and how many of them hit a problem. It does this separately for each <strong>app version</strong> and each <strong>kind of problem</strong>: crashes, ANRs (the app freezing) and non-fatal errors. Then it asks a simple question: is this variant clearly worse than the people who didn't get it?</p>
+  <p>"Clearly" is deliberately strict. There must be enough users, enough affected users, a rate at least twice control's, and a statistical test that holds up even though dozens of flags are checked every 15 minutes. Because the test stays valid however often it looks, evidence keeps building over the week, so even a small rollout gets caught once enough users have seen it. Most noise never makes it through.</p>
   <h3>3. It tells your team, and can step in</h3>
   <p>When something is clearly worse, your team gets one Slack message that answers the questions the on-call engineer spent 45 minutes on:</p>
   <div class="slack"><b class="who">Culprit</b>🚨 <b>new_checkout=on</b> on v5.2: crash rate 1.20% vs control 0.20% (120/10000 users, p=1.1e-17). Action: <b>killed</b>. Undo: turn <code>killswitch_new_checkout</code> off in Statsig.
@@ -157,7 +157,7 @@ Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% 
   <h2 id="why">Why it helps more than another dashboard</h2>
   <p>It's tempting to think this is a dashboard problem: put crashes and flags on one screen and let people spot the pattern. We don't think it is, for a few human reasons.</p>
   <p><strong>People are bad at spotting causes at 3am, and nobody should have to.</strong> Dashboards still ask a person to notice the pattern, form a hypothesis and check it. Culprit does the checking first and hands over a conclusion with the evidence attached. The engineer's job changes from detective to reviewer.</p>
-  <p><strong>The comparison is fair by design.</strong> Comparing users who got a variant with users who didn't, on the same app version and over the same 24 hours, filters out most of what fools people: a bad day for one OS, a spike in traffic, an unrelated bug in that release. If the variant users crash and the control users on the same version don't, the variant is the likely culprit.</p>
+  <p><strong>The comparison is fair by design.</strong> Comparing users who got a variant with users who didn't, on the same app version and over the same days, filters out most of what fools people: a bad day for one OS, a spike in traffic, an unrelated bug in that release. If the variant users crash and the control users on the same version don't, the variant is the likely culprit.</p>
   <p><strong>It catches what crash-free rates hide.</strong> A variant rolled out to 5% of users can double their crash rate while barely moving the overall number. Per-version, per-signal comparison finds it anyway, including freezes (ANRs) that never show up as crashes.</p>
   <p><strong>It shortens the path from "we know" to "it's fixed".</strong> Knowing the cause is half the battle. The other half is finding someone who can flip the flag. For flags you've opted in, Culprit does that within minutes, and leaves a clear note on how to undo it.</p>
   <p><strong>It builds trust instead of asking for it.</strong> Culprit starts in alert-only mode. You run it against the last 30 days of your own data first and check its findings against incidents you remember. You only let it act once it has earned that. We think that's the right relationship between a team and its automation.</p>
@@ -215,7 +215,6 @@ Concentrated in: Android 14 (62% vs 20% control) · Samsung SM-S918B (41% vs 9% 
       <h3>Make Culprit sharper</h3>
       <ul>
         <li><strong>Remember undos and false alarms</strong>, so the dashboard shows each kill switch's current state and how often alerts were right.</li>
-        <li><strong>Sequential testing</strong>: a smarter statistical method that reaches confident answers faster on low-traffic flags without raising false alarms.</li>
         <li><strong>Detection per OS version</strong>, for regressions too small to move the overall rate.</li>
       </ul>
     </div>
